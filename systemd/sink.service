@@ -1,0 +1,20 @@
+[Unit]
+Description=sink file storage (sebc/sink)
+Documentation=https://box-pi4.tail70238a.ts.net/git/sebc/sink
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=box
+Group=box
+WorkingDirectory=/home/box/sink
+ExecStart=/home/box/sink/bin/sink -addr :8080 -storage storage
+Restart=on-failure
+RestartSec=3
+# hard caps match app defaults; leave LAN bind as greenlit
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
