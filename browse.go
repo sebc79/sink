@@ -126,8 +126,11 @@ func (s *Server) renderBrowse(w http.ResponseWriter, r *http.Request, rel, errMs
 		prefill = clean + "/"
 	}
 	notice := ""
-	if okMsg == "uploaded" {
+	switch okMsg {
+	case "uploaded":
 		notice = "Upload stored."
+	case "flushed":
+		notice = "Storage emptied."
 	}
 	data := pageData{
 		Title:         browseTitle(clean),

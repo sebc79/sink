@@ -3,8 +3,8 @@ name: sink
 description: >
   Use the sink HTTP file-storage service to upload files (optionally unpacking
   zip/tar archives into a subtree), list the storage tree, view or download a
-  file, and download a subtree as zip or tar. Use when uploading, retrieving,
-  unpacking, browsing, or archiving files in sink storage.
+  file, download a subtree as zip or tar, and empty storage. Use when uploading,
+  retrieving, unpacking, browsing, archiving, or flushing files in sink storage.
 ---
 
 # sink storage skill
@@ -179,6 +179,24 @@ curl -sS -o docs.zip "{{BASE_URL}}/api/archive/docs?format=zip"
 curl -sS -o all.tar.gz "{{BASE_URL}}/api/archive?format=tar.gz"
 ```
 
+## Empty storage
+
+`POST {{BASE_URL}}/api/flush`
+
+Deletes every file and directory inside `storage/`. The storage directory itself is kept. There is no confirmation; sink holds copies only.
+
+```bash
+curl -sS -X POST "{{BASE_URL}}/api/flush"
+```
+
+Response:
+
+```json
+{"ok": true, "flushed": true}
+```
+
+Flushing an already-empty tree is success.
+
 ## HTML UI (humans)
 
 Not required for agents. Linked here so you do not confuse them with the API.
@@ -189,6 +207,7 @@ Not required for agents. Linked here so you do not confuse them with the API.
 | `GET {{BASE_URL}}/browse/{path}` | Directory browser |
 | `GET {{BASE_URL}}/view/{path}` | View one file (Markdown is previewed; add `?mode=raw` for the source) |
 | `POST {{BASE_URL}}/upload` | HTML form post (redirects; do not use) |
+| `POST {{BASE_URL}}/flush` | HTML Flush button (empties `storage/`; redirects; do not use) |
 
 ## Errors
 
@@ -208,5 +227,6 @@ JSON body: `{"ok": false, "error": "<message>"}`.
 2. Upload with `POST /api/upload`. Use `unpack=auto` only when the body is a zip or tar archive you want extracted.
 3. Verify with `GET /api/tree/{parent}` or `GET /api/file/{path}`.
 4. To take a subtree away, `GET /api/archive/{path}?format=tar.gz`.
+5. To empty storage, `POST /api/flush`.
 
 Path examples (all legal): `readme.md`, `pkg/mod/github.com/foo@v1.0.0`, `datasets/2026-09-09/run.bin`.

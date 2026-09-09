@@ -48,7 +48,16 @@
   }
   .brand span { color: var(--accent); }
   .tag { color: var(--muted); font-size: .85rem; margin-left: .5rem; font-style: italic; }
-  nav.links { display: flex; gap: 1rem; font-size: .92rem; }
+  nav.links { display: flex; gap: 1rem; font-size: .92rem; align-items: center; }
+  form.flush { margin: 0; }
+  form.flush button {
+    background: transparent;
+    color: var(--accent);
+    border: 1px solid var(--accent);
+    padding: .22rem .7rem;
+    font: 600 13px/1.2 inherit;
+  }
+  form.flush button:hover { background: var(--accent); color: #fffaf2; filter: none; }
   .wrap {
     display: grid;
     grid-template-columns: 240px 1fr;
@@ -217,6 +226,9 @@
   <nav class="links">
     <a href="/">Browse</a>
     <a href="/skill">Agent skill</a>
+    <form class="flush" action="/flush" method="post">
+      <button type="submit" title="Empty storage/">Flush</button>
+    </form>
   </nav>
 </header>
 <div class="wrap">
