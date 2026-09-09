@@ -1,3 +1,5 @@
 /storage/
 *.exe
 /sink
+/bin/
+
