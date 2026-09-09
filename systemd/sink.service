@@ -1,0 +1,20 @@
+[Unit]
+Description=sink file storage
+Documentation=https://github.com/sebc79/sink
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust User/Group and paths to your install.
+User=sink
+Group=sink
+WorkingDirectory=/opt/sink
+ExecStart=/opt/sink/bin/sink -addr :8080 -storage storage
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
