@@ -3,7 +3,7 @@
 A small Go HTTP service that stores files under a local `storage/` directory.
 
 - `POST /api/upload` stores a file at a relative path, or unpacks zip/tar (gzip, bzip2, xz) content as a subtree.
-- `/` is an HTML tree browser: view or download a file, download a folder as zip/tar/tar.gz, and upload through the same API.
+- `/` is an HTML tree browser: view or download a file, download a folder as zip/tar/tar.gz, and upload through the same API. Markdown (`*.md`) opens as a rendered preview (KaTeX for `$…$` / `$$…$$`) with a switch back to the raw source.
 - `GET /skill` is the machine-readable contract for an LLM agent.
 
 ## Run

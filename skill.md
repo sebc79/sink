@@ -187,7 +187,7 @@ Not required for agents. Linked here so you do not confuse them with the API.
 | --- | --- |
 | `GET {{BASE_URL}}/` | Directory browser at storage root |
 | `GET {{BASE_URL}}/browse/{path}` | Directory browser |
-| `GET {{BASE_URL}}/view/{path}` | View one file |
+| `GET {{BASE_URL}}/view/{path}` | View one file (Markdown is previewed; add `?mode=raw` for the source) |
 | `POST {{BASE_URL}}/upload` | HTML form post (redirects; do not use) |
 
 ## Errors

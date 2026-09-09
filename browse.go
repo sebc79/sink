@@ -62,8 +62,11 @@ type fileView struct {
 	Size        int64
 	ModTime     time.Time
 	Content     string
+	HTML        template.HTML
 	IsText      bool
 	IsImage     bool
+	IsMarkdown  bool
+	ViewMode    string
 	Truncated   bool
 	HexPreview  string
 	ContentType string
@@ -175,6 +178,11 @@ func (s *Server) handleView(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	if strings.EqualFold(r.URL.Query().Get("mode"), "raw") {
+		fv.ViewMode = "raw"
+	} else {
+		fv.ViewMode = "preview"
+	}
 	data := pageData{
 		Title:         fv.Name,
 		RelPath:       clean,
@@ -194,7 +202,11 @@ func (s *Server) handleView(w http.ResponseWriter, r *http.Request) {
 func (s *Server) renderPage(w http.ResponseWriter, data pageData) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'none'")
+	csp := "default-src 'self'; img-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'none'"
+	if data.File != nil && data.File.IsMarkdown {
+		csp = "default-src 'self'; img-src 'self' data: https:; style-src 'unsafe-inline' https://cdn.jsdelivr.net; script-src 'unsafe-inline' https://cdn.jsdelivr.net; font-src https://cdn.jsdelivr.net; frame-ancestors 'none'"
+	}
+	w.Header().Set("Content-Security-Policy", csp)
 	var buf bytes.Buffer
 	if err := s.pages.page.ExecuteTemplate(&buf, "page.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -234,6 +246,14 @@ func (s *Server) readFileView(abs, clean string, st os.FileInfo) (*fileView, err
 	if isTextContent(ct, body) {
 		fv.IsText = true
 		fv.Content = string(body)
+		if isMarkdownName(clean) {
+			fv.IsMarkdown = true
+			html, err := renderMarkdown(body, clean)
+			if err != nil {
+				return nil, err
+			}
+			fv.HTML = html
+		}
 		return fv, nil
 	}
 	preview := body
