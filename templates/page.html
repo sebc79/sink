@@ -75,7 +75,8 @@
   .tree ul { padding-left: .9rem; border-left: 1px solid var(--line); margin-left: .3rem; }
   .tree a { display: inline-block; padding: .12rem 0; color: var(--ink); }
   .tree .here { font-weight: 700; color: var(--accent); }
-  main { padding: 1.1rem 1.5rem 3rem; }
+  main { padding: 1.1rem 1.5rem 3rem; min-width: 0; }
+  .wrap.md-wide { max-width: 80vw; }
   .crumbs { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .88rem; margin: 0 0 1rem; color: var(--muted); }
   .crumbs a { color: var(--forest); }
   .panel {
@@ -201,7 +202,7 @@
     font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   }
   .md-preview pre code { background: none; color: inherit; padding: 0; }
-  .md-preview table { border-collapse: collapse; margin: .8em 0; width: 100%; }
+  .md-preview table { border-collapse: collapse; margin: .8em 0; display: block; max-width: 100%; overflow-x: auto; }
   .md-preview th, .md-preview td { border: 1px solid var(--line); padding: .4rem .65rem; }
   .md-preview th { background: #f6eee3; font-size: .82rem; }
   .md-preview img { max-width: 100%; height: auto; border-radius: 6px; }
@@ -231,7 +232,7 @@
     </form>
   </nav>
 </header>
-<div class="wrap">
+<div class="wrap{{if and .File .File.IsMarkdown}} md-wide{{end}}">
   <aside>
     <h2>Tree</h2>
     <ul class="tree">
