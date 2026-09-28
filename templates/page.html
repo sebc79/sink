@@ -216,6 +216,19 @@
     form.upload-form { grid-template-columns: 1fr; }
     main { padding: 1rem; }
   }
+  @media print {
+    header, aside, nav, details, .filehead, .toolbar, .banner, .hint { display: none !important; }
+    html, body { background: #fff !important; color: #000; }
+    .wrap, .wrap.md-wide { display: block; max-width: none; margin: 0; }
+    main { padding: 0; }
+    .md-preview, pre.view { max-height: none !important; overflow: visible !important; border: 0; box-shadow: none; border-radius: 0; padding: 0; background: #fff; }
+    pre.view { color: #000; white-space: pre-wrap; }
+    .md-preview pre { white-space: pre-wrap; overflow: visible; }
+    .md-preview table { display: table; width: 100%; overflow: visible; }
+    .md-preview tr, .md-preview img, .md-preview pre { break-inside: avoid; }
+    .md-preview h1, .md-preview h2, .md-preview h3 { break-after: avoid; }
+    .md-preview [hidden], pre.view[hidden] { display: none !important; }
+  }
 </style>
 </head>
 <body>
