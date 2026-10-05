@@ -182,7 +182,7 @@ func (s *Server) await(ctx context.Context, suffix, referer string, want int64) 
 
 func (s *Server) pollLocate(suffix, referer string) (located, error) {
 	loc, err := s.locate(suffix, referer)
-	if err != nil || loc.kind != locateMiss || s.tree == "" {
+	if err != nil || loc.kind != locateMiss {
 		return loc, err
 	}
 	s.maybeRebuildIndex()
@@ -213,10 +213,6 @@ func (s *Server) releaseHold() {
 
 func holdPresence(loc located, want int64) (bool, int64) {
 	if loc.kind != locateHit {
-		return false, 0
-	}
-	// A storage copy is not the checkout an mtime query is waiting on.
-	if !loc.fromTree && want > 0 {
 		return false, 0
 	}
 	st, err := os.Lstat(loc.abs)

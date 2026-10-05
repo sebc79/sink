@@ -1,5 +1,5 @@
 [Unit]
-Description=sink file storage
+Description=sink tree viewer
 Documentation=https://github.com/sebc79/sink
 After=network-online.target
 Wants=network-online.target
@@ -10,9 +10,9 @@ Type=simple
 User=sink
 Group=sink
 WorkingDirectory=/opt/sink
-# Example only. Pass -tree when this host has an ArborSync checkout.
-# ExecStart=/opt/sink/bin/sink -addr :8080 -storage storage -tree /home/box/knowledge -peer-socket /var/cache/arborsync/peers.sock
-ExecStart=/opt/sink/bin/sink -addr :8080 -storage storage
+# Example only. -tree is required.
+# ExecStart=/opt/sink/bin/sink -addr :8080 -tree /home/box/knowledge -peer-socket /var/cache/arborsync/peers.sock
+ExecStart=/opt/sink/bin/sink -addr :8080 -tree /home/box/knowledge
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true

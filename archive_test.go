@@ -11,7 +11,7 @@ import (
 func TestPackRoundTrip(t *testing.T) {
 	t.Parallel()
 	s := testServer(t)
-	dir := filepath.Join(s.root, "pkg")
+	dir := filepath.Join(s.tree, "pkg")
 	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0755); err != nil {
 		t.Fatal(err)
 	}

@@ -34,7 +34,6 @@ const (
 var errHoldBusy = errors.New("too many held views")
 
 type Server struct {
-	root       string
 	tree       string
 	peerSocket string
 	senderID   string
@@ -57,7 +56,6 @@ type Server struct {
 }
 
 type Config struct {
-	StorageDir  string
 	TreeDir     string
 	PeerSocket  string
 	SenderID    string
@@ -68,8 +66,8 @@ type Config struct {
 }
 
 func New(cfg Config) (*Server, error) {
-	if cfg.StorageDir == "" {
-		cfg.StorageDir = "storage"
+	if strings.TrimSpace(cfg.TreeDir) == "" {
+		return nil, fmt.Errorf("tree is required")
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -95,12 +93,16 @@ func New(cfg Config) (*Server, error) {
 			return peers.QueryDeadline(socket, d)
 		}
 	}
-	abs, err := filepath.Abs(cfg.StorageDir)
+	treeAbs, err := filepath.Abs(cfg.TreeDir)
 	if err != nil {
 		return nil, err
 	}
-	if err := os.MkdirAll(abs, 0755); err != nil {
-		return nil, err
+	st, err := os.Lstat(treeAbs)
+	if err != nil {
+		return nil, fmt.Errorf("tree: %w", err)
+	}
+	if st.Mode()&os.ModeSymlink != 0 || !st.IsDir() {
+		return nil, fmt.Errorf("tree must be a directory")
 	}
 	pages, err := loadTemplates()
 	if err != nil {
@@ -108,7 +110,7 @@ func New(cfg Config) (*Server, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	srv := &Server{
-		root:       abs,
+		tree:       treeAbs,
 		peerSocket: cfg.PeerSocket,
 		senderID:   cfg.SenderID,
 		holdFor:    cfg.HoldTimeout,
@@ -120,32 +122,11 @@ func New(cfg Config) (*Server, error) {
 		log:        cfg.Logger,
 		pages:      pages,
 	}
-	if cfg.TreeDir != "" {
-		treeAbs, err := filepath.Abs(cfg.TreeDir)
-		if err != nil {
-			cancel()
-			return nil, err
-		}
-		st, err := os.Lstat(treeAbs)
-		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("tree: %w", err)
-		}
-		if st.Mode()&os.ModeSymlink != 0 || !st.IsDir() {
-			cancel()
-			return nil, fmt.Errorf("tree must be a directory")
-		}
-		if treeAbs == abs || withinRoot(abs, treeAbs) || withinRoot(treeAbs, abs) {
-			cancel()
-			return nil, fmt.Errorf("tree and storage must not overlap")
-		}
-		srv.tree = treeAbs
-		if err := srv.rebuildIndex(); err != nil {
-			cancel()
-			return nil, err
-		}
-		go srv.indexLoop(ctx)
+	if err := srv.rebuildIndex(); err != nil {
+		cancel()
+		return nil, err
 	}
+	go srv.indexLoop(ctx)
 	return srv, nil
 }
 
@@ -323,7 +304,7 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, r, http.StatusBadRequest, fmt.Errorf("path is a directory; use /api/tree or /api/archive"))
 		return
 	}
-	if want > 0 && loc.fromTree && unixMtime(st.ModTime()) < want {
+	if want > 0 && unixMtime(st.ModTime()) < want {
 		s.writeError(w, r, http.StatusNotFound, holdFailError(clean, ErrStaleMtime))
 		return
 	}
@@ -455,7 +436,7 @@ type Entry struct {
 func (s *Server) listEntries(abs, rel string, recursive bool) ([]Entry, bool, error) {
 	var out []Entry
 	truncated := false
-	treeList, rootDev, haveDev := s.treeListDev(abs)
+	rootDev, haveDev := s.treeDev()
 	if recursive {
 		err := filepath.WalkDir(abs, func(p string, d fs.DirEntry, err error) error {
 			if err != nil {
@@ -474,13 +455,13 @@ func (s *Server) listEntries(abs, rel string, recursive bool) ([]Entry, bool, er
 				}
 				return nil
 			}
-			if treeList && ignoredName(d.Name()) {
+			if ignoredName(d.Name()) {
 				if d.IsDir() {
 					return fs.SkipDir
 				}
 				return nil
 			}
-			if treeList && haveDev && d.IsDir() {
+			if haveDev && d.IsDir() {
 				if dev, ok := devOf(st); ok && dev != rootDev {
 					return fs.SkipDir
 				}
@@ -515,10 +496,10 @@ func (s *Server) listEntries(abs, rel string, recursive bool) ([]Entry, bool, er
 		if st.Mode()&os.ModeSymlink != 0 {
 			continue
 		}
-		if treeList && ignoredName(d.Name()) {
+		if ignoredName(d.Name()) {
 			continue
 		}
-		if treeList && haveDev && d.IsDir() {
+		if haveDev && d.IsDir() {
 			if dev, ok := devOf(st); ok && dev != rootDev {
 				continue
 			}
@@ -537,16 +518,12 @@ func (s *Server) listEntries(abs, rel string, recursive bool) ([]Entry, bool, er
 	return out, truncated, nil
 }
 
-func (s *Server) treeListDev(abs string) (bool, uint64, bool) {
-	if s.tree == "" || !withinRoot(s.tree, abs) {
-		return false, 0, false
-	}
+func (s *Server) treeDev() (uint64, bool) {
 	ri, err := os.Lstat(s.tree)
 	if err != nil {
-		return true, 0, false
+		return 0, false
 	}
-	dev, ok := devOf(ri)
-	return true, dev, ok
+	return devOf(ri)
 }
 
 func makeEntry(st os.FileInfo, rel string) Entry {

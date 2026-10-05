@@ -186,7 +186,7 @@ func walkPack(srcAbs, rel string, fn packFn) error {
 }
 
 func archiveFilename(rel, format string) string {
-	base := "storage"
+	base := "tree"
 	if rel != "" {
 		base = path.Base(rel)
 	}

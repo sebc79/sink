@@ -23,7 +23,6 @@ type located struct {
 	kind      locateKind
 	rel       string
 	abs       string
-	fromTree  bool
 	matches   []string
 	truncated bool
 	suffix    string
@@ -53,19 +52,8 @@ func (s *Server) locate(suffix, referer string) (located, error) {
 		return located{kind: locateInvalid, suffix: suffix}, nil
 	}
 	cands := exactCandidates(cleaned)
-	if s.tree != "" {
-		for _, c := range cands {
-			loc, err := s.statLocated(s.tree, c, cleaned, true)
-			if err != nil {
-				return loc, err
-			}
-			if loc.kind == locateHit || loc.kind == locateDir {
-				return loc, nil
-			}
-		}
-	}
 	for _, c := range cands {
-		loc, err := s.statLocated(s.root, c, cleaned, false)
+		loc, err := s.statLocated(c, cleaned)
 		if err != nil {
 			return loc, err
 		}
@@ -73,33 +61,31 @@ func (s *Server) locate(suffix, referer string) (located, error) {
 			return loc, nil
 		}
 	}
-	if s.tree != "" {
-		for _, c := range cands {
-			if c == "" {
-				continue
-			}
-			matches := applyReferer(s.index.lookup(c), referer)
-			if len(matches) == 0 {
-				continue
-			}
-			if len(matches) == 1 {
-				loc, err := s.statLocated(s.tree, matches[0], cleaned, true)
-				if err != nil {
-					return loc, err
-				}
-				if loc.kind == locateHit || loc.kind == locateDir {
-					return loc, nil
-				}
-				continue
-			}
-			shown, trunc := capMatches(matches)
-			return located{
-				kind:      locateAmbiguous,
-				suffix:    cleaned,
-				matches:   shown,
-				truncated: trunc,
-			}, nil
+	for _, c := range cands {
+		if c == "" {
+			continue
 		}
+		matches := applyReferer(s.index.lookup(c), referer)
+		if len(matches) == 0 {
+			continue
+		}
+		if len(matches) == 1 {
+			loc, err := s.statLocated(matches[0], cleaned)
+			if err != nil {
+				return loc, err
+			}
+			if loc.kind == locateHit || loc.kind == locateDir {
+				return loc, nil
+			}
+			continue
+		}
+		shown, trunc := capMatches(matches)
+		return located{
+			kind:      locateAmbiguous,
+			suffix:    cleaned,
+			matches:   shown,
+			truncated: trunc,
+		}, nil
 	}
 	return located{kind: locateMiss, suffix: cleaned}, nil
 }
@@ -124,8 +110,8 @@ func exactCandidates(cleaned string) []string {
 	return out
 }
 
-func (s *Server) statLocated(root, rel, suffix string, fromTree bool) (located, error) {
-	abs, _, kind, err := s.statIn(root, rel)
+func (s *Server) statLocated(rel, suffix string) (located, error) {
+	abs, _, kind, err := s.statIn(s.tree, rel)
 	if err != nil {
 		if errors.Is(err, ErrPathEscape) || errors.Is(err, ErrPathInvalid) {
 			return located{kind: locateInvalid, suffix: suffix}, nil
@@ -137,9 +123,9 @@ func (s *Server) statLocated(root, rel, suffix string, fromTree bool) (located, 
 	}
 	switch kind {
 	case statFile:
-		return located{kind: locateHit, rel: rel, abs: abs, fromTree: fromTree, suffix: suffix}, nil
+		return located{kind: locateHit, rel: rel, abs: abs, suffix: suffix}, nil
 	case statDir:
-		return located{kind: locateDir, rel: rel, abs: abs, fromTree: fromTree, suffix: suffix}, nil
+		return located{kind: locateDir, rel: rel, abs: abs, suffix: suffix}, nil
 	default:
 		return located{kind: locateMiss, suffix: suffix}, nil
 	}

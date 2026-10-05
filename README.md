@@ -22,12 +22,12 @@ The **`let-that-sink-in`** skill teaches an agent when and how to use sink: when
 
 - **Run sink** on a computer both you and the agent can reach: your own computer, another computer you both reach, or the agent's computer (tested: a sink on a Grok Bot computer, bound to its Tailscale address, was reached from the user's own device; servers tagged in your Tailscale policy may be blocked).
 - **A VPN such as [Tailscale](https://tailscale.com)** if the agent's computer is not on your network: install it on both machines (Google sign-in is the easiest) so your device can open the links. Links stop working while the machine hosting sink is asleep or off.
-- **A synced folder** such as an ArborSync checkout of the agent's files on the sink host, passed with `-tree` (see below).
+- **A synced folder** such as an ArborSync checkout of the agent's files on the sink host, passed with `-tree` (required).
 - **Give the agent the base URL** (for example `http://<host>:8080`). The skill asks for it if it doesn't have it.
 
 ### Set up
 
-1. Run sink where you can reach it (`-addr` / `-storage` / `-tree` as needed).
+1. Run sink where you can reach it (`-addr` / `-tree` as needed).
 2. Install the `let-that-sink-in` skill, or paste this house rule into the agent's instructions:
 
    > When you hand me a file from the synced folder, send the **view URL** with `?mtime=`, not a box path.
@@ -41,20 +41,19 @@ No auth in the default build. Treat LAN/Tailscale reachability as your perimeter
 
 ## What it serves
 
-- `/view` and `/api/file` resolve a path in this order: exact tree path, exact storage path, then a unique basename or trailing-segment match in the tree. Optional `?mtime=` holds until the checkout file is at least that fresh.
-- `/`, `/browse`, `/api/tree`, and `/api/archive` list and pack `-storage` during this dual-read phase. Storage may still hold leftover files from earlier runs. Markdown (`*.md`) opens as a rendered preview (KaTeX for `$…$` / `$$…$$`) with a switch back to the raw source.
+- `/view` and `/api/file` resolve a path in the `-tree` checkout: exact path, then a unique basename or trailing-segment match. Optional `?mtime=` holds until the checkout file is at least that fresh.
+- `/`, `/browse`, `/api/tree`, and `/api/archive` list and pack the same checkout. Markdown (`*.md`) opens as a rendered preview (KaTeX for `$…$` / `$$…$$`) with a switch back to the raw source.
 
 ## Run
 
 ```bash
-go run .
+go run . -tree /home/box/knowledge
 ```
 
-Listens on `:8080` and serves `./storage`. Flags:
+Listens on `:8080` and serves the checkout. Flags:
 
 ```
 -addr :8080
--storage storage
 -tree
 -peer-socket
 -sender-slave grok-bot-box
@@ -62,9 +61,13 @@ Listens on `:8080` and serves `./storage`. Flags:
 -index-rescan 45s
 ```
 
-`-tree` is an optional ArborSync checkout, for example `/home/box/knowledge`. A `/view` or `/api/file` request waits up to `-hold-timeout` (clamped at 60s) when the checkout file is missing, or when `?mtime=` is set and the checkout file is older than that Unix timestamp. `-peer-socket` is the ArborSync peer socket. While a request is held, sink watches `-sender-slave`. A query error is not treated as a dead sender; the request waits out the hold. The response is 404 when the wait ends, the slave is disconnected or stuck, or the checkout is still older than `mtime`. Too many concurrent holds return 503. `-index-rescan` is how often sink rebuilds the basename index of `-tree`; missed views rate-limit extra rebuilds.
+`-tree` is required: the ArborSync checkout, for example `/home/box/knowledge`. A `/view` or `/api/file` request waits up to `-hold-timeout` (clamped at 60s) when the checkout file is missing, or when `?mtime=` is set and the checkout file is older than that Unix timestamp. `-peer-socket` is the ArborSync peer socket. While a request is held, sink watches `-sender-slave`. A query error is not treated as a dead sender; the request waits out the hold. The response is 404 when the wait ends, the slave is disconnected or stuck, or the checkout is still older than `mtime`. Too many concurrent holds return 503. `-index-rescan` is how often sink rebuilds the basename index of `-tree`; missed views rate-limit extra rebuilds.
 
-Open http://localhost:8080/ to browse storage.
+Open http://localhost:8080/ to browse the checkout.
+
+### Status
+
+ArborSync cutover is done. sink reads only `-tree`. There is no `-storage` directory and no dual-read fallback.
 
 ## Note for the Grok Bot team
 
