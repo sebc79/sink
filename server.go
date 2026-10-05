@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"sink/peers"
 )
 
 const (
@@ -26,6 +29,14 @@ const (
 
 type Server struct {
 	root       string
+	tree       string
+	peerSocket string
+	senderID   string
+	holdFor    time.Duration
+	indexEvery time.Duration
+	index      *treeIndex
+	queryPeers func(string) (peers.Snapshot, error)
+	stopIndex  func()
 	maxUpload  int64
 	maxExtract int64
 	maxFiles   int
@@ -35,11 +46,17 @@ type Server struct {
 }
 
 type Config struct {
-	StorageDir string
-	MaxUpload  int64
-	MaxExtract int64
-	MaxFiles   int
-	Logger     *slog.Logger
+	StorageDir  string
+	TreeDir     string
+	PeerSocket  string
+	SenderID    string
+	HoldTimeout time.Duration
+	IndexRescan time.Duration
+	QueryPeers  func(string) (peers.Snapshot, error)
+	MaxUpload   int64
+	MaxExtract  int64
+	MaxFiles    int
+	Logger      *slog.Logger
 }
 
 func New(cfg Config) (*Server, error) {
@@ -58,6 +75,18 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	if cfg.SenderID == "" {
+		cfg.SenderID = "grok-bot-box"
+	}
+	if cfg.HoldTimeout <= 0 {
+		cfg.HoldTimeout = 30 * time.Second
+	}
+	if cfg.IndexRescan <= 0 {
+		cfg.IndexRescan = 45 * time.Second
+	}
+	if cfg.QueryPeers == nil {
+		cfg.QueryPeers = peers.Query
+	}
 	abs, err := filepath.Abs(cfg.StorageDir)
 	if err != nil {
 		return nil, err
@@ -73,15 +102,42 @@ func New(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{
+	ctx, cancel := context.WithCancel(context.Background())
+	srv := &Server{
 		root:       abs,
+		peerSocket: cfg.PeerSocket,
+		senderID:   cfg.SenderID,
+		holdFor:    cfg.HoldTimeout,
+		indexEvery: cfg.IndexRescan,
+		index:      &treeIndex{byBase: map[string][]string{}},
+		queryPeers: cfg.QueryPeers,
+		stopIndex:  cancel,
 		maxUpload:  cfg.MaxUpload,
 		maxExtract: cfg.MaxExtract,
 		maxFiles:   cfg.MaxFiles,
 		log:        cfg.Logger,
 		pages:      pages,
 		skill:      string(skill),
-	}, nil
+	}
+	if cfg.TreeDir != "" {
+		treeAbs, err := filepath.Abs(cfg.TreeDir)
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+		srv.tree = treeAbs
+		if err := srv.rebuildIndex(); err != nil {
+			srv.log.Info("index", "err", err)
+		}
+		go srv.indexLoop(ctx)
+	}
+	return srv, nil
+}
+
+func (s *Server) stop() {
+	if s.stopIndex != nil {
+		s.stopIndex()
+	}
 }
 
 func (s *Server) Handler() http.Handler {
