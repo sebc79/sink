@@ -597,11 +597,6 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, status int, 
 	if errors.Is(err, ErrPathEscape) || errors.Is(err, ErrPathInvalid) {
 		status = http.StatusBadRequest
 	}
-	if errors.Is(err, ErrBadFormat) {
-		if status == http.StatusInternalServerError {
-			status = http.StatusBadRequest
-		}
-	}
 	if r != nil && strings.HasPrefix(r.URL.Path, "/api/") {
 		s.writeJSON(w, status, errorBody{OK: false, Error: msg})
 		return

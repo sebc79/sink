@@ -20,10 +20,6 @@ func canonicalFormat(s string) string {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "tgz":
 		return "tar.gz"
-	case "tbz", "tbz2":
-		return "tar.bz2"
-	case "txz":
-		return "tar.xz"
 	default:
 		return strings.ToLower(strings.TrimSpace(s))
 	}
