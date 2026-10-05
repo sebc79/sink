@@ -22,16 +22,13 @@ import (
 )
 
 const (
-	defaultMaxUpload   int64 = 512 << 20
-	defaultMaxExtract  int64 = 1 << 30
-	defaultMaxFiles          = 100_000
-	maxTreeEntries           = 10_000
-	maxViewBytes             = 1 << 20
-	maxHoldTimeout           = 60 * time.Second
-	maxConcurrentHolds       = 32
-	indexRebuildMin          = 2 * time.Second
-	peerCacheTTL             = 250 * time.Millisecond
-	peerQueryBound           = 2 * time.Second
+	maxTreeEntries     = 10_000
+	maxViewBytes       = 1 << 20
+	maxHoldTimeout     = 60 * time.Second
+	maxConcurrentHolds = 32
+	indexRebuildMin    = 2 * time.Second
+	peerCacheTTL       = 250 * time.Millisecond
+	peerQueryBound     = 2 * time.Second
 )
 
 var errHoldBusy = errors.New("too many held views")
@@ -55,12 +52,8 @@ type Server struct {
 	peerSnap   peers.Snapshot
 	peerErr    error
 	peerAt     time.Time
-	maxUpload  int64
-	maxExtract int64
-	maxFiles   int
 	log        *slog.Logger
 	pages      *pageTemplates
-	skill      string
 }
 
 type Config struct {
@@ -71,24 +64,12 @@ type Config struct {
 	HoldTimeout time.Duration
 	IndexRescan time.Duration
 	QueryPeers  func(string) (peers.Snapshot, error)
-	MaxUpload   int64
-	MaxExtract  int64
-	MaxFiles    int
 	Logger      *slog.Logger
 }
 
 func New(cfg Config) (*Server, error) {
 	if cfg.StorageDir == "" {
 		cfg.StorageDir = "storage"
-	}
-	if cfg.MaxUpload <= 0 {
-		cfg.MaxUpload = defaultMaxUpload
-	}
-	if cfg.MaxExtract <= 0 {
-		cfg.MaxExtract = defaultMaxExtract
-	}
-	if cfg.MaxFiles <= 0 {
-		cfg.MaxFiles = defaultMaxFiles
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -125,10 +106,6 @@ func New(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	skill, err := fs.ReadFile(embedded, "skill.md")
-	if err != nil {
-		return nil, err
-	}
 	ctx, cancel := context.WithCancel(context.Background())
 	srv := &Server{
 		root:       abs,
@@ -140,12 +117,8 @@ func New(cfg Config) (*Server, error) {
 		queryPeers: cfg.QueryPeers,
 		stopIndex:  cancel,
 		holds:      make(chan struct{}, maxConcurrentHolds),
-		maxUpload:  cfg.MaxUpload,
-		maxExtract: cfg.MaxExtract,
-		maxFiles:   cfg.MaxFiles,
 		log:        cfg.Logger,
 		pages:      pages,
-		skill:      string(skill),
 	}
 	if cfg.TreeDir != "" {
 		treeAbs, err := filepath.Abs(cfg.TreeDir)
@@ -188,13 +161,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /browse", s.handleBrowse)
 	mux.HandleFunc("GET /browse/{path...}", s.handleBrowse)
 	mux.HandleFunc("GET /view/{path...}", s.handleView)
-	mux.HandleFunc("POST /upload", s.handleHTMLUpload)
-	mux.HandleFunc("POST /flush", s.handleHTMLFlush)
-	mux.HandleFunc("GET /skill", s.handleSkill)
-	mux.HandleFunc("GET /skill.md", s.handleSkill)
-	mux.HandleFunc("GET /SKILL.md", s.handleSkill)
-	mux.HandleFunc("POST /api/upload", s.handleAPIUpload)
-	mux.HandleFunc("POST /api/flush", s.handleAPIFlush)
 	mux.HandleFunc("GET /api/file/{path...}", s.handleGetFile)
 	mux.HandleFunc("GET /api/tree", s.handleTree)
 	mux.HandleFunc("GET /api/tree/{path...}", s.handleTree)
@@ -212,7 +178,7 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 		w.Header().Set("Referrer-Policy", "same-origin")
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
@@ -253,13 +219,6 @@ func (s *Server) requestPath(r *http.Request) string {
 		p = r.URL.Query().Get("path")
 	}
 	return p
-}
-
-func (s *Server) handleSkill(w http.ResponseWriter, r *http.Request) {
-	body := strings.ReplaceAll(s.skill, "{{BASE_URL}}", baseURL(r))
-	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store")
-	_, _ = io.WriteString(w, body)
 }
 
 func (s *Server) writeReadStop(w http.ResponseWriter, r *http.Request, loc located, html bool) bool {
@@ -638,14 +597,6 @@ func (s *Server) writeError(w http.ResponseWriter, r *http.Request, status int, 
 	if errors.Is(err, ErrPathEscape) || errors.Is(err, ErrPathInvalid) {
 		status = http.StatusBadRequest
 	}
-	if errors.Is(err, ErrTooLarge) || errors.Is(err, ErrTooManyFiles) {
-		status = http.StatusRequestEntityTooLarge
-	}
-	if errors.Is(err, ErrArchiveSlip) || errors.Is(err, ErrNotArchive) || errors.Is(err, ErrBadFormat) {
-		if status == http.StatusInternalServerError {
-			status = http.StatusBadRequest
-		}
-	}
 	if r != nil && strings.HasPrefix(r.URL.Path, "/api/") {
 		s.writeJSON(w, status, errorBody{OK: false, Error: msg})
 		return
@@ -660,28 +611,6 @@ func queryTruthy(r *http.Request, key string) bool {
 		return true
 	}
 	return false
-}
-
-func baseURL(r *http.Request) string {
-	proto := "http"
-	if r.TLS != nil {
-		proto = "https"
-	}
-	if p := firstHeader(r.Header.Get("X-Forwarded-Proto")); p != "" {
-		proto = p
-	}
-	host := r.Host
-	if h := firstHeader(r.Header.Get("X-Forwarded-Host")); h != "" {
-		host = h
-	}
-	return proto + "://" + host
-}
-
-func firstHeader(v string) string {
-	if v == "" {
-		return ""
-	}
-	return strings.TrimSpace(strings.Split(v, ",")[0])
 }
 
 func contentType(name string, head []byte) string {

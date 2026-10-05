@@ -8,10 +8,8 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
-	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 )
@@ -20,9 +18,6 @@ func testServer(t *testing.T) *Server {
 	t.Helper()
 	s, err := New(Config{
 		StorageDir: t.TempDir(),
-		MaxUpload:  8 << 20,
-		MaxExtract: 8 << 20,
-		MaxFiles:   1000,
 		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {
@@ -31,60 +26,11 @@ func testServer(t *testing.T) *Server {
 	return s
 }
 
-func TestUploadRawCurlDefaultContentType(t *testing.T) {
+func TestGetFileFromStorage(t *testing.T) {
 	s := testServer(t)
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
-
-	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/upload?path=curl.txt", strings.NewReader("from-curl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer res.Body.Close()
-	if res.StatusCode != 200 {
-		body, _ := io.ReadAll(res.Body)
-		t.Fatalf("status %d %s", res.StatusCode, body)
-	}
-	got, err := os.ReadFile(s.root + "/curl.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != "from-curl" {
-		t.Fatalf("got %q", got)
-	}
-}
-
-func TestUploadRawAndGetFile(t *testing.T) {
-	s := testServer(t)
-	ts := httptest.NewServer(s.Handler())
-	t.Cleanup(ts.Close)
-
-	req, err := http.NewRequest(http.MethodPost, ts.URL+"/api/upload?path=docs/notes.txt", strings.NewReader("hello sink"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Content-Type", "application/octet-stream")
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer res.Body.Close()
-	if res.StatusCode != 200 {
-		body, _ := io.ReadAll(res.Body)
-		t.Fatalf("status %d %s", res.StatusCode, body)
-	}
-	var out uploadResult
-	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
-		t.Fatal(err)
-	}
-	if !out.OK || out.Path != "docs/notes.txt" || out.Stored != "file" {
-		t.Fatalf("result %+v", out)
-	}
+	writeRel(t, s.root, "docs/notes.txt", "hello sink")
 
 	got, err := http.Get(ts.URL + "/api/file/docs/notes.txt")
 	if err != nil {
@@ -97,98 +43,11 @@ func TestUploadRawAndGetFile(t *testing.T) {
 	}
 }
 
-func TestUploadMultipartUnpackZip(t *testing.T) {
-	s := testServer(t)
-	ts := httptest.NewServer(s.Handler())
-	t.Cleanup(ts.Close)
-
-	body, ctype := multipartFile(t, "vendor/lib", "auto", "lib.zip", makeZip(t, map[string]string{
-		"mod.go":    "package mod",
-		"sub/x.txt": "x",
-	}))
-	res, err := http.Post(ts.URL+"/api/upload", ctype, body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer res.Body.Close()
-	if res.StatusCode != 200 {
-		b, _ := io.ReadAll(res.Body)
-		t.Fatalf("status %d %s", res.StatusCode, b)
-	}
-	got, err := http.Get(ts.URL + "/api/file/vendor/lib/mod.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer got.Body.Close()
-	b, _ := io.ReadAll(got.Body)
-	if string(b) != "package mod" {
-		t.Fatalf("got %q", b)
-	}
-
-	tree, err := http.Get(ts.URL + "/api/tree/vendor/lib?recursive=1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tree.Body.Close()
-	var listing treeResponse
-	if err := json.NewDecoder(tree.Body).Decode(&listing); err != nil {
-		t.Fatal(err)
-	}
-	if !listing.OK || listing.Type != "directory" || len(listing.Entries) < 2 {
-		t.Fatalf("tree %+v", listing)
-	}
-}
-
-func TestUploadPathTraversalRejected(t *testing.T) {
-	s := testServer(t)
-	ts := httptest.NewServer(s.Handler())
-	t.Cleanup(ts.Close)
-
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/upload?path=../../etc/passwd", strings.NewReader("x"))
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer res.Body.Close()
-	if res.StatusCode != 400 {
-		t.Fatalf("status %d", res.StatusCode)
-	}
-}
-
-func TestFileDirConflict(t *testing.T) {
-	s := testServer(t)
-	ts := httptest.NewServer(s.Handler())
-	t.Cleanup(ts.Close)
-
-	put := func(path, body string) *http.Response {
-		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/upload?path="+path, strings.NewReader(body))
-		res, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return res
-	}
-	res := put("docs/a.txt", "one")
-	res.Body.Close()
-	if res.StatusCode != 200 {
-		t.Fatalf("first %d", res.StatusCode)
-	}
-	res = put("docs/a.txt/extra", "two")
-	b, _ := io.ReadAll(res.Body)
-	res.Body.Close()
-	if res.StatusCode != http.StatusConflict {
-		t.Fatalf("nested under file: %d %s", res.StatusCode, b)
-	}
-}
-
 func TestArchiveDownload(t *testing.T) {
 	s := testServer(t)
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
-
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/upload?path=docs/a.txt", strings.NewReader("aaa"))
-	res, _ := http.DefaultClient.Do(req)
-	res.Body.Close()
+	writeRel(t, s.root, "docs/a.txt", "aaa")
 
 	res, err := http.Get(ts.URL + "/api/archive/docs?format=zip")
 	if err != nil {
@@ -241,29 +100,36 @@ func TestArchiveDownload(t *testing.T) {
 	}
 }
 
-func TestSkillRewritesBaseURL(t *testing.T) {
+func TestRemovedUploadEraRoutes(t *testing.T) {
 	s := testServer(t)
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
 
-	res, err := http.Get(ts.URL + "/skill")
-	if err != nil {
-		t.Fatal(err)
+	checks := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/skill"},
+		{http.MethodGet, "/skill.md"},
+		{http.MethodGet, "/SKILL.md"},
+		{http.MethodPost, "/upload"},
+		{http.MethodPost, "/flush"},
+		{http.MethodPost, "/api/upload"},
+		{http.MethodPost, "/api/flush"},
 	}
-	defer res.Body.Close()
-	if ct := res.Header.Get("Content-Type"); !strings.Contains(ct, "text/markdown") {
-		t.Fatalf("content-type %s", ct)
-	}
-	b, _ := io.ReadAll(res.Body)
-	body := string(b)
-	if strings.Contains(body, "{{BASE_URL}}") {
-		t.Fatal("placeholder not replaced")
-	}
-	if !strings.Contains(body, ts.URL+"/api/upload") {
-		t.Fatalf("missing base url in skill:\n%s", body)
-	}
-	if !strings.Contains(body, "unpack") {
-		t.Fatal("skill missing unpack docs")
+	for _, tc := range checks {
+		req, err := http.NewRequest(tc.method, ts.URL+tc.path, strings.NewReader("x"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s %s: status %d", tc.method, tc.path, res.StatusCode)
+		}
 	}
 }
 
@@ -271,10 +137,7 @@ func TestBrowseAndViewHTML(t *testing.T) {
 	s := testServer(t)
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
-
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/upload?path=readme.md", strings.NewReader("# hello"))
-	res, _ := http.DefaultClient.Do(req)
-	res.Body.Close()
+	writeRel(t, s.root, "readme.md", "# hello")
 
 	res, err := http.Get(ts.URL + "/")
 	if err != nil {
@@ -289,8 +152,18 @@ func TestBrowseAndViewHTML(t *testing.T) {
 	if !strings.Contains(html, "readme.md") {
 		t.Fatalf("listing missing file: %s", html)
 	}
-	if !strings.Contains(html, `action="/upload"`) {
-		t.Fatal("missing upload form")
+	if strings.Contains(html, `action="/upload"`) || strings.Contains(html, ">Flush<") || strings.Contains(html, `href="/skill"`) {
+		t.Fatalf("leftover upload-era UI: %s", html)
+	}
+
+	res, err = http.Get(ts.URL + "/?err=spoofed-upload-error")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	b, _ = io.ReadAll(res.Body)
+	if strings.Contains(string(b), "spoofed-upload-error") {
+		t.Fatal("browse still renders ?err=")
 	}
 
 	res, err = http.Get(ts.URL + "/view/readme.md")
@@ -302,89 +175,6 @@ func TestBrowseAndViewHTML(t *testing.T) {
 	if !strings.Contains(string(b), "# hello") {
 		t.Fatalf("view missing content: %s", b)
 	}
-}
-
-func TestHTMLUploadForm(t *testing.T) {
-	s := testServer(t)
-	ts := httptest.NewServer(s.Handler())
-	t.Cleanup(ts.Close)
-
-	body, ctype := multipartFile(t, "form.txt", "none", "form.txt", []byte("from-form"))
-	client := &http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	res, err := client.Post(ts.URL+"/upload", ctype, body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusSeeOther {
-		b, _ := io.ReadAll(res.Body)
-		t.Fatalf("status %d %s", res.StatusCode, b)
-	}
-	got, err := os.ReadFile(s.root + "/form.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != "from-form" {
-		t.Fatalf("got %q", got)
-	}
-}
-
-func TestUnpackNonArchiveFails(t *testing.T) {
-	s := testServer(t)
-	ts := httptest.NewServer(s.Handler())
-	t.Cleanup(ts.Close)
-
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/upload?path=d&unpack=auto", strings.NewReader("not an archive"))
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer res.Body.Close()
-	if res.StatusCode != 400 {
-		t.Fatalf("status %d", res.StatusCode)
-	}
-}
-
-func TestTrailingSlashFileRejected(t *testing.T) {
-	s := testServer(t)
-	ts := httptest.NewServer(s.Handler())
-	t.Cleanup(ts.Close)
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/upload?path=dir/", strings.NewReader("x"))
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer res.Body.Close()
-	if res.StatusCode != 400 {
-		t.Fatalf("status %d", res.StatusCode)
-	}
-}
-
-func multipartFile(t *testing.T, path, unpack, filename string, data []byte) (*bytes.Buffer, string) {
-	t.Helper()
-	var buf bytes.Buffer
-	w := multipart.NewWriter(&buf)
-	if err := w.WriteField("path", path); err != nil {
-		t.Fatal(err)
-	}
-	if err := w.WriteField("unpack", unpack); err != nil {
-		t.Fatal(err)
-	}
-	fw, err := w.CreateFormFile("file", filename)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := fw.Write(data); err != nil {
-		t.Fatal(err)
-	}
-	if err := w.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return &buf, w.FormDataContentType()
 }
 
 func TestViewHasFullScreenButton(t *testing.T) {
@@ -399,14 +189,9 @@ func TestViewHasFullScreenButton(t *testing.T) {
 		"x.bin":   "\x00\x01\x02\x03",
 	}
 	for name, body := range files {
-		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/upload?path="+name, strings.NewReader(body))
-		res, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		res.Body.Close()
+		writeRel(t, s.root, name, body)
 
-		res, err = http.Get(ts.URL + "/view/" + name)
+		res, err := http.Get(ts.URL + "/view/" + name)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -431,5 +216,26 @@ func TestViewHasFullScreenButton(t *testing.T) {
 	res.Body.Close()
 	if strings.Contains(string(b), `id="pv-fs"`) {
 		t.Fatal("full screen button should only be on view pages")
+	}
+}
+
+func TestTreeListingFromStorage(t *testing.T) {
+	s := testServer(t)
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+	writeRel(t, s.root, "vendor/lib/mod.go", "package mod")
+	writeRel(t, s.root, "vendor/lib/sub/x.txt", "x")
+
+	tree, err := http.Get(ts.URL + "/api/tree/vendor/lib?recursive=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tree.Body.Close()
+	var listing treeResponse
+	if err := json.NewDecoder(tree.Body).Decode(&listing); err != nil {
+		t.Fatal(err)
+	}
+	if !listing.OK || listing.Type != "directory" || len(listing.Entries) < 2 {
+		t.Fatalf("tree %+v", listing)
 	}
 }
