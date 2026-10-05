@@ -242,3 +242,41 @@ func TestNonMarkdownViewHasNoKatex(t *testing.T) {
 		t.Fatal("katex loaded for plain text")
 	}
 }
+
+func TestRenderMarkdownTreePaths(t *testing.T) {
+	src := "" +
+		"See projects/alpha/notes/keep.md for the list.\n\n" +
+		"Open `projects/alpha/extra/keep.md` now.\n\n" +
+		"Path /home/box/knowledge/projects/gamma/unique.md end.\n\n" +
+		"[n](projects/alpha/notes/keep.md)\n\n" +
+		"![p](/home/box/knowledge/projects/gamma/pic.png)\n\n" +
+		"[v](/view/already.md)\n\n" +
+		"[h](https://example.com/projects/x)\n\n" +
+		"```\nprojects/secret.md\n```\n"
+	html, err := renderMarkdown([]byte(src), "docs/readme.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(html)
+	for _, want := range []string{
+		`/view/projects/alpha/notes/keep.md`,
+		`/view/projects/alpha/extra/keep.md`,
+		`/view/projects/gamma/unique.md`,
+		`/api/file/projects/gamma/pic.png?inline=1`,
+		`/view/already.md`,
+		`https://example.com/projects/x`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("missing %s in %s", want, s)
+		}
+	}
+	if strings.Contains(s, "/view/docs/projects/") {
+		t.Fatalf("joined projects onto the current directory: %s", s)
+	}
+	if strings.Contains(s, "/view/projects/secret.md") {
+		t.Fatalf("rewrote a fenced path: %s", s)
+	}
+	if strings.Contains(s, "/home/box/knowledge/projects/gamma/pic.png") {
+		t.Fatalf("left the image path absolute: %s", s)
+	}
+}
