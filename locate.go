@@ -148,12 +148,6 @@ func (s *Server) statIn(root, rel string) (string, os.FileInfo, statKind, error)
 		return "", nil, statMissing, nil
 	}
 	abs := root
-	if rel != "" {
-		abs = filepath.Join(root, filepath.FromSlash(rel))
-	}
-	if !withinRoot(root, abs) {
-		return "", nil, statMissing, ErrPathEscape
-	}
 	info, err := os.Lstat(abs)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -163,6 +157,27 @@ func (s *Server) statIn(root, rel string) (string, os.FileInfo, statKind, error)
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
 		return abs, info, statSymlink, nil
+	}
+	if rel != "" {
+		for _, seg := range strings.Split(rel, "/") {
+			if seg == "" || ignoredName(seg) {
+				return "", nil, statMissing, ErrPathInvalid
+			}
+			abs = filepath.Join(abs, seg)
+			if !withinRoot(root, abs) {
+				return "", nil, statMissing, ErrPathEscape
+			}
+			info, err = os.Lstat(abs)
+			if err != nil {
+				if os.IsNotExist(err) {
+					return abs, nil, statMissing, nil
+				}
+				return "", nil, statMissing, err
+			}
+			if info.Mode()&os.ModeSymlink != 0 {
+				return abs, info, statSymlink, nil
+			}
+		}
 	}
 	same, err := sameMount(root, abs, info)
 	if err != nil {

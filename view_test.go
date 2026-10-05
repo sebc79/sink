@@ -263,6 +263,49 @@ func TestViewServesFreshMtime(t *testing.T) {
 	}
 }
 
+func TestViewRejectsMidPathSymlink(t *testing.T) {
+	tree := t.TempDir()
+	storage := t.TempDir()
+	outside := t.TempDir()
+	writeRel(t, outside, "nested/secret.md", "OUTSIDE-SECRET")
+	if err := os.Symlink(filepath.Join(outside, "nested"), filepath.Join(tree, "linked")); err != nil {
+		t.Fatal(err)
+	}
+	s := newTreeServer(t, tree, storage)
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+	res, err := http.Get(ts.URL + "/view/linked/secret.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := readAll(t, res)
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("status %d %s", res.StatusCode, body)
+	}
+	if strings.Contains(body, "OUTSIDE-SECRET") {
+		t.Fatalf("escaped tree: %s", body)
+	}
+}
+
+func TestViewMtimeDoesNotServeStorage(t *testing.T) {
+	tree := t.TempDir()
+	storage := t.TempDir()
+	writeRel(t, storage, "projects/only-store.md", "STORAGE-BYTES")
+	s := newTreeServer(t, tree, storage)
+	s.holdFor = 200 * time.Millisecond
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+	client := &http.Client{Timeout: 2 * time.Second}
+	res, err := client.Get(ts.URL + "/view/projects/only-store.md?mtime=1700000100")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := readAll(t, res)
+	if res.StatusCode != http.StatusNotFound || strings.Contains(body, "STORAGE-BYTES") {
+		t.Fatalf("status %d %s", res.StatusCode, body)
+	}
+}
+
 func TestViewInvalidMtime(t *testing.T) {
 	s := newTreeServer(t, t.TempDir(), t.TempDir())
 	ts := httptest.NewServer(s.Handler())

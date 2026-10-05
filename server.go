@@ -125,9 +125,23 @@ func New(cfg Config) (*Server, error) {
 			cancel()
 			return nil, err
 		}
+		st, err := os.Lstat(treeAbs)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("tree: %w", err)
+		}
+		if st.Mode()&os.ModeSymlink != 0 || !st.IsDir() {
+			cancel()
+			return nil, fmt.Errorf("tree must be a directory")
+		}
+		if treeAbs == abs || withinRoot(abs, treeAbs) || withinRoot(treeAbs, abs) {
+			cancel()
+			return nil, fmt.Errorf("tree and storage must not overlap")
+		}
 		srv.tree = treeAbs
 		if err := srv.rebuildIndex(); err != nil {
-			srv.log.Info("index", "err", err)
+			cancel()
+			return nil, err
 		}
 		go srv.indexLoop(ctx)
 	}

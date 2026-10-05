@@ -98,6 +98,7 @@ func TestLocatePaths(t *testing.T) {
 		{name: "git", in: ".git/config", kind: locateInvalid},
 		{name: "tmp", in: "nested/.arborsync-tmp/hidden.md", kind: locateInvalid},
 		{name: "symlink", in: "escape.md", symlink: true},
+		{name: "mid symlink", in: "linked/secret.md", symlink: true},
 		{name: "storage fallback", in: "only-storage/note.md", kind: locateHit, rel: "only-storage/note.md", fromTree: false},
 		{name: "tree wins", in: "projects/alpha/notes/keep.md", kind: locateHit, rel: "projects/alpha/notes/keep.md", fromTree: true},
 		{name: "ambiguous", in: "keep.md", kind: locateAmbiguous, matches: []string{
@@ -183,6 +184,31 @@ func TestLocateMatchCap(t *testing.T) {
 		if m == "d50/dup.md" {
 			t.Fatal("kept match past the cap")
 		}
+	}
+}
+
+func TestNewRejectsBadTree(t *testing.T) {
+	t.Parallel()
+	storage := t.TempDir()
+	_, err := New(Config{
+		StorageDir: storage,
+		TreeDir:    filepath.Join(storage, "missing"),
+		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err == nil {
+		t.Fatal("missing tree")
+	}
+	nested := filepath.Join(storage, "nested")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err = New(Config{
+		StorageDir: storage,
+		TreeDir:    nested,
+		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err == nil {
+		t.Fatal("tree inside storage")
 	}
 }
 
