@@ -16,12 +16,13 @@ Other products solve pieces of this with artifact panes, PR attachments, Slack u
 
 ## Use with Grok Bot (and similar agents)
 
-The **`let-that-sink-in`** skill teaches an agent when and how to use sink: whenever it wants to share a file from its computer with you, it uploads the file and sends you a link instead of a path. Get it from [`skill.md`](skill.md) in this repository (a marketplace listing will be linked here once it is published). The skill is only the client instructions. It needs this service running, reachable by both the agent and you (see below).
+The **`let-that-sink-in`** skill teaches an agent when and how to use sink: whenever it wants to share a file from its computer with you, it sends you a link instead of a path, linking files in a synced folder directly and uploading anything else. Get it from [`skills/let-that-sink-in/SKILL.md`](skills/let-that-sink-in/SKILL.md) in this repository; [`skill.md`](skill.md) is the full API the server serves at `/skill` (a marketplace listing will be linked here once it is published). The skill is only the client instructions. It needs this service running, reachable by both the agent and you (see below).
 
 ### Requirements
 
 - **Run sink** on a computer both you and the agent can reach: your own computer, another computer you both reach, or the agent's computer (tested: a sink on a Grok Bot computer, bound to its Tailscale address, was reached from the user's own device; servers tagged in your Tailscale policy may be blocked).
 - **A VPN such as [Tailscale](https://tailscale.com)** if the agent's computer is not on your network: install it on both machines (Google sign-in is the easiest) so the agent can upload and your device can open the links. Links stop working while the machine hosting sink is asleep or off.
+- **Optional, for links without upload: a synced folder** such as an ArborSync checkout of the agent's files on the sink host, passed with `-tree` (see below).
 - **Give the agent the base URL** (for example `http://<host>:8080`). The skill asks for it if it doesn't have it.
 
 ### Set up
