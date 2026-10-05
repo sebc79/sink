@@ -210,6 +210,77 @@
   .md-preview input[type=checkbox] { pointer-events: none; }
   .md-preview .math-display { display: block; margin: 1em 0; overflow-x: auto; overflow-y: hidden; text-align: center; }
   .md-preview .katex-display { margin: .6em 0; }
+  .pv-bar { display: flex; align-items: center; justify-content: flex-end; gap: .6rem; margin: 0 0 .45rem; }
+  .pv-name { display: none; }
+  .pv-bar button.pv-fs {
+    justify-self: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: .35rem;
+    min-height: 2rem;
+    background: transparent;
+    color: var(--forest);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    padding: .25rem .7rem;
+    font-family: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.2;
+  }
+  .pv-bar button.pv-fs:hover { background: #fbf3e6; filter: none; }
+  .pv-fs svg { width: 14px; height: 14px; flex: none; }
+  .pv-fs .i-exit, .pv.is-fs .pv-fs .i-enter { display: none; }
+  .pv.is-fs .pv-fs .i-exit { display: inline; }
+  .pv-img .preview { display: block; height: auto; }
+  body.fs-lock { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden; }
+  .pv.is-fs {
+    position: fixed;
+    inset: 0;
+    z-index: 2147483000;
+    width: 100%;
+    height: 100vh;
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    background: var(--paper);
+    padding: env(safe-area-inset-top, 0) env(safe-area-inset-right, 0) env(safe-area-inset-bottom, 0) env(safe-area-inset-left, 0);
+  }
+  .pv.is-fs .pv-bar {
+    flex: none;
+    margin: 0;
+    padding: .45rem .75rem;
+    border-bottom: 1px solid var(--line);
+    background: var(--paper);
+  }
+  .pv.is-fs .pv-name {
+    display: block;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    font: 600 .9rem/1.3 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  .pv.is-fs .pv-fs { background: var(--ink); color: var(--paper); border-color: var(--ink); min-height: 2.4rem; padding: .3rem .9rem; }
+  .pv.is-fs .pv-fs:hover { background: var(--ink); }
+  .pv.is-fs .pv-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+  .pv.is-fs .pv-body > * {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+    margin: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  .pv.is-fs .pv-body > [hidden] { display: none; }
+  .pv.is-fs .md-preview { padding: 1rem clamp(1rem, 4vw, 3rem) 2rem; }
+  .pv.is-fs pre.view, .pv.is-fs pre.hex { padding: 1rem clamp(1rem, 3vw, 2rem); }
+  .pv.is-fs .pv-img { background: var(--bg); padding: .75rem; }
+  .pv.is-fs .pv-img .preview { margin: 0 auto; max-width: 100%; }
   @media (max-width: 820px) {
     .wrap { grid-template-columns: 1fr; }
     aside { display: none; }
@@ -228,6 +299,10 @@
     .md-preview tr, .md-preview img, .md-preview pre { break-inside: avoid; }
     .md-preview h1, .md-preview h2, .md-preview h3 { break-after: avoid; }
     .md-preview [hidden], pre.view[hidden] { display: none !important; }
+    .pv-bar { display: none !important; }
+    body.fs-lock { position: static !important; overflow: visible !important; }
+    .pv.is-fs, .pv.is-fs .pv-body { position: static; display: block; height: auto; padding: 0; background: #fff; }
+    .pv.is-fs .pv-body > * { max-height: none !important; overflow: visible !important; }
   }
 </style>
 </head>
@@ -309,17 +384,31 @@
         </div>
       </div>
       {{if .File.Truncated}}<p class="hint">Showing the first 1 MB. Download the file for the rest.</p>{{end}}
+      {{if not (or .File.IsImage .File.IsText)}}
+        <p class="hint">Binary file ({{.File.ContentType}}). Hex preview of the first bytes:</p>
+      {{end}}
+      <div class="pv" id="pv">
+        <div class="pv-bar">
+          <span class="pv-name">{{.File.Name}}</span>
+          <button type="button" class="pv-fs" id="pv-fs" aria-pressed="false" aria-controls="pv" title="Full screen">
+            <svg class="i-enter" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M1.5 5.5v-4h4M10.5 1.5h4v4M14.5 10.5v4h-4M5.5 14.5h-4v-4"/></svg>
+            <svg class="i-exit" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13"/></svg>
+            <span class="pv-fs-label">Full screen</span>
+          </button>
+        </div>
+        <div class="pv-body">
       {{if .File.IsImage}}
-        <p><img class="preview" src="/api/file/{{urlPath .File.Path}}?inline=1" alt="{{.File.Name}}"></p>
+        <div class="pv-img"><img class="preview" src="/api/file/{{urlPath .File.Path}}?inline=1" alt="{{.File.Name}}"></div>
       {{else if .File.IsMarkdown}}
         <div class="md-preview" id="md-preview" {{if eq .File.ViewMode "raw"}}hidden{{end}}>{{.File.HTML}}</div>
         <pre class="view" id="md-raw" {{if ne .File.ViewMode "raw"}}hidden{{end}}>{{.File.Content}}</pre>
       {{else if .File.IsText}}
         <pre class="view">{{.File.Content}}</pre>
       {{else}}
-        <p class="hint">Binary file ({{.File.ContentType}}). Hex preview of the first bytes:</p>
         <pre class="hex">{{.File.HexPreview}}</pre>
       {{end}}
+        </div>
+      </div>
     {{else}}
       <div class="toolbar">
         {{if not .IsRoot}}<a href="{{if .Parent}}/browse/{{urlPath .Parent}}{{else}}/{{end}}">↑ Parent</a>{{end}}
@@ -390,6 +479,59 @@
     });
   }
 </script>
+{{if .IsFile}}
+<script>
+  (() => {
+    const pv = document.getElementById("pv");
+    const btn = document.getElementById("pv-fs");
+    if (!pv || !btn) return;
+    const label = btn.querySelector(".pv-fs-label");
+    const body = document.body;
+    let scrollY = 0;
+    const isOn = () => pv.classList.contains("is-fs");
+    function setUI(on) {
+      label.textContent = on ? "Exit" : "Full screen";
+      btn.title = on ? "Exit full screen (Esc)" : "Full screen";
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+    }
+    function enter() {
+      if (isOn()) return;
+      scrollY = window.scrollY;
+      body.style.top = -scrollY + "px";
+      body.classList.add("fs-lock");
+      pv.classList.add("is-fs");
+      setUI(true);
+      if (pv.requestFullscreen && document.fullscreenEnabled && !document.fullscreenElement) {
+        pv.requestFullscreen().catch(() => {});
+      }
+    }
+    function restoreScroll() {
+      window.scrollTo(0, scrollY);
+      requestAnimationFrame(() => window.scrollTo(0, scrollY));
+    }
+    function exit() {
+      if (!isOn()) return;
+      pv.classList.remove("is-fs");
+      body.classList.remove("fs-lock");
+      body.style.top = "";
+      restoreScroll();
+      setUI(false);
+      if (document.fullscreenElement && document.exitFullscreen) {
+        document.exitFullscreen().catch(() => {});
+      }
+    }
+    btn.addEventListener("click", () => (isOn() ? exit() : enter()));
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && isOn()) exit();
+    });
+    document.addEventListener("fullscreenchange", () => {
+      if (document.fullscreenElement) return;
+      if (isOn()) exit();
+      else restoreScroll();
+    });
+  })();
+</script>
+{{end}}
 {{if and .File .File.IsMarkdown}}
 <script>
   const mdPreview = document.getElementById("md-preview");

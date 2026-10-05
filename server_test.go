@@ -386,3 +386,50 @@ func multipartFile(t *testing.T, path, unpack, filename string, data []byte) (*b
 	}
 	return &buf, w.FormDataContentType()
 }
+
+func TestViewHasFullScreenButton(t *testing.T) {
+	s := testServer(t)
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+
+	files := map[string]string{
+		"doc.md":  "# Title\n\nbody\n",
+		"a.txt":   "plain",
+		"pic.png": "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR",
+		"x.bin":   "\x00\x01\x02\x03",
+	}
+	for name, body := range files {
+		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/upload?path="+name, strings.NewReader(body))
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+
+		res, err = http.Get(ts.URL + "/view/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		html := string(b)
+		if res.StatusCode != 200 {
+			t.Fatalf("%s: status %d", name, res.StatusCode)
+		}
+		for _, want := range []string{`id="pv"`, `id="pv-fs"`, "Full screen", `class="pv-body"`} {
+			if !strings.Contains(html, want) {
+				t.Fatalf("%s: view missing %q", name, want)
+			}
+		}
+	}
+
+	res, err := http.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if strings.Contains(string(b), `id="pv-fs"`) {
+		t.Fatal("full screen button should only be on view pages")
+	}
+}
