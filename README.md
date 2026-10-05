@@ -56,10 +56,19 @@ Listens on `:8080` and writes into `./storage`. Flags:
 ```
 -addr :8080
 -storage storage
+-tree
+-peer-socket
+-sender-slave grok-bot-box
+-hold-timeout 30s
+-index-rescan 45s
 -max-upload 512MB
 -max-extract 1GB
 -max-files 100000
 ```
+
+`-tree` is an optional ArborSync checkout, for example `/home/box/knowledge`. `/view` and `/browse` read that tree first. An exact path that is not in the tree is read from `-storage`. Upload and flush still write only to `-storage`.
+
+A `/view` or `/api/file` request waits up to `-hold-timeout` when the checkout file is missing, or when `?mtime=` is set and the checkout file is older than that Unix timestamp. `-peer-socket` is the ArborSync peer socket. While a request is held, sink watches `-sender-slave`. The response is 404 when the wait ends, the slave is disconnected or stuck, or the checkout is still older than `mtime`. `-index-rescan` is how often sink rebuilds the basename index of `-tree`.
 
 Open http://localhost:8080/ to browse. Fetch http://localhost:8080/skill for the agent API contract (curl examples included).
 
