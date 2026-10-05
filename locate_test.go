@@ -9,12 +9,11 @@ import (
 	"testing"
 )
 
-func newTreeServer(t *testing.T, tree, storage string) *Server {
+func newTreeServer(t *testing.T, tree string) *Server {
 	t.Helper()
 	s, err := New(Config{
-		StorageDir: storage,
-		TreeDir:    tree,
-		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		TreeDir: tree,
+		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -36,7 +35,6 @@ func writeRel(t *testing.T, root, rel, body string) {
 
 func TestLocatePaths(t *testing.T) {
 	tree := t.TempDir()
-	storage := t.TempDir()
 	writeRel(t, tree, "projects/alpha/notes/keep.md", "alpha-keep")
 	writeRel(t, tree, "projects/alpha/extra/keep.md", "alpha-extra")
 	writeRel(t, tree, "projects/beta/notes/keep.md", "beta-keep")
@@ -47,8 +45,6 @@ func TestLocatePaths(t *testing.T) {
 	writeRel(t, tree, ".arborsync-tmp/scratch.md", "tmp")
 	writeRel(t, tree, "nested/.git/hidden.md", "hidden")
 	writeRel(t, tree, "nested/.arborsync-tmp/hidden.md", "hidden2")
-	writeRel(t, storage, "only-storage/note.md", "stored")
-	writeRel(t, storage, "projects/alpha/notes/keep.md", "storage-copy")
 
 	outside := t.TempDir()
 	writeRel(t, outside, "secret.txt", "secret")
@@ -60,7 +56,7 @@ func TestLocatePaths(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	s := newTreeServer(t, tree, storage)
+	s := newTreeServer(t, tree)
 
 	for _, f := range s.index.list() {
 		if hasIgnoredSegment(f) || f == "escape.md" || len(f) >= 6 && f[:6] == "linked" {
@@ -78,32 +74,30 @@ func TestLocatePaths(t *testing.T) {
 		referer   string
 		kind      locateKind
 		rel       string
-		fromTree  bool
 		matches   []string
 		truncated bool
 		symlink   bool
 	}{
-		{name: "exact", in: "projects/gamma/unique.md", kind: locateHit, rel: "projects/gamma/unique.md", fromTree: true},
-		{name: "strip home", in: "home/box/knowledge/projects/gamma/unique.md", kind: locateHit, rel: "projects/gamma/unique.md", fromTree: true},
-		{name: "strip knowledge exact file", in: "knowledge/plain.md", kind: locateHit, rel: "knowledge/plain.md", fromTree: true},
-		{name: "strip knowledge prefix", in: "knowledge/projects/gamma/unique.md", kind: locateHit, rel: "projects/gamma/unique.md", fromTree: true},
-		{name: "strip bot", in: "bot/knowledge/projects/gamma/unique.md", kind: locateHit, rel: "projects/gamma/unique.md", fromTree: true},
-		{name: "basename", in: "unique.md", kind: locateHit, rel: "projects/gamma/unique.md", fromTree: true},
-		{name: "trailing", in: "gamma/unique.md", kind: locateHit, rel: "projects/gamma/unique.md", fromTree: true},
-		{name: "dir", in: "projects/alpha", kind: locateDir, rel: "projects/alpha", fromTree: true},
+		{name: "exact", in: "projects/gamma/unique.md", kind: locateHit, rel: "projects/gamma/unique.md"},
+		{name: "strip home", in: "home/box/knowledge/projects/gamma/unique.md", kind: locateHit, rel: "projects/gamma/unique.md"},
+		{name: "strip knowledge exact file", in: "knowledge/plain.md", kind: locateHit, rel: "knowledge/plain.md"},
+		{name: "strip knowledge prefix", in: "knowledge/projects/gamma/unique.md", kind: locateHit, rel: "projects/gamma/unique.md"},
+		{name: "strip bot", in: "bot/knowledge/projects/gamma/unique.md", kind: locateHit, rel: "projects/gamma/unique.md"},
+		{name: "basename", in: "unique.md", kind: locateHit, rel: "projects/gamma/unique.md"},
+		{name: "trailing", in: "gamma/unique.md", kind: locateHit, rel: "projects/gamma/unique.md"},
+		{name: "dir", in: "projects/alpha", kind: locateDir, rel: "projects/alpha"},
 		{name: "dotdot", in: "../etc/passwd", kind: locateInvalid},
 		{name: "git", in: ".git/config", kind: locateInvalid},
 		{name: "tmp", in: "nested/.arborsync-tmp/hidden.md", kind: locateInvalid},
 		{name: "symlink", in: "escape.md", symlink: true},
 		{name: "mid symlink", in: "linked/secret.md", symlink: true},
-		{name: "storage fallback", in: "only-storage/note.md", kind: locateHit, rel: "only-storage/note.md", fromTree: false},
-		{name: "tree wins", in: "projects/alpha/notes/keep.md", kind: locateHit, rel: "projects/alpha/notes/keep.md", fromTree: true},
+		{name: "nested keep", in: "projects/alpha/notes/keep.md", kind: locateHit, rel: "projects/alpha/notes/keep.md"},
 		{name: "ambiguous", in: "keep.md", kind: locateAmbiguous, matches: []string{
 			"projects/alpha/extra/keep.md",
 			"projects/alpha/notes/keep.md",
 			"projects/beta/notes/keep.md",
 		}},
-		{name: "referer one", in: "keep.md", referer: betaRef, kind: locateHit, rel: "projects/beta/notes/keep.md", fromTree: true},
+		{name: "referer one", in: "keep.md", referer: betaRef, kind: locateHit, rel: "projects/beta/notes/keep.md"},
 		{name: "referer many", in: "keep.md", referer: alphaRef, kind: locateAmbiguous, matches: []string{
 			"projects/alpha/extra/keep.md",
 			"projects/alpha/notes/keep.md",
@@ -133,59 +127,36 @@ func TestLocatePaths(t *testing.T) {
 			if tc.rel != "" && loc.rel != tc.rel {
 				t.Fatalf("rel=%q want %q", loc.rel, tc.rel)
 			}
-			if tc.kind == locateHit && loc.fromTree != tc.fromTree {
-				t.Fatalf("fromTree=%v", loc.fromTree)
-			}
 			if tc.matches != nil && !reflect.DeepEqual(loc.matches, tc.matches) {
 				t.Fatalf("matches=%v want %v", loc.matches, tc.matches)
 			}
 			if loc.truncated != tc.truncated {
 				t.Fatalf("truncated=%v", loc.truncated)
 			}
-			if tc.kind == locateHit && loc.fromTree {
+			if tc.kind == locateHit {
 				if !withinRoot(tree, loc.abs) {
 					t.Fatalf("abs %s escaped tree", loc.abs)
 				}
 			}
-			if tc.name == "tree wins" {
+			if tc.name == "nested keep" {
 				body, err := os.ReadFile(loc.abs)
 				if err != nil {
 					t.Fatal(err)
 				}
 				if string(body) != "alpha-keep" {
-					t.Fatalf("served storage copy %q", body)
+					t.Fatalf("body %q", body)
 				}
 			}
 		})
 	}
 }
 
-func TestLocateStorageBeatsFuzzyTree(t *testing.T) {
-	tree := t.TempDir()
-	storage := t.TempDir()
-	writeRel(t, tree, "projects/x/keep.md", "tree-keep")
-	writeRel(t, storage, "keep.md", "storage-keep")
-	s := newTreeServer(t, tree, storage)
-	loc, err := s.locate("keep.md", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if loc.kind != locateHit || loc.fromTree || loc.rel != "keep.md" {
-		t.Fatalf("loc=%#v", loc)
-	}
-	body, err := os.ReadFile(loc.abs)
-	if err != nil || string(body) != "storage-keep" {
-		t.Fatalf("body %q %v", body, err)
-	}
-}
-
 func TestLocateMatchCap(t *testing.T) {
 	tree := t.TempDir()
-	storage := t.TempDir()
 	for i := 0; i < maxMatchList+1; i++ {
 		writeRel(t, tree, filepath.ToSlash(filepath.Join("d"+two(i), "dup.md")), "x")
 	}
-	s := newTreeServer(t, tree, storage)
+	s := newTreeServer(t, tree)
 	loc, err := s.locate("dup.md", "")
 	if err != nil {
 		t.Fatal(err)
@@ -203,35 +174,42 @@ func TestLocateMatchCap(t *testing.T) {
 	}
 }
 
-func TestNewRejectsBadTree(t *testing.T) {
+func TestNewRequiresTree(t *testing.T) {
 	t.Parallel()
-	storage := t.TempDir()
-	_, err := New(Config{
-		StorageDir: storage,
-		TreeDir:    filepath.Join(storage, "missing"),
-		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
-	})
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	_, err := New(Config{Logger: log})
 	if err == nil {
 		t.Fatal("missing tree")
 	}
-	nested := filepath.Join(storage, "nested")
-	if err := os.MkdirAll(nested, 0o755); err != nil {
-		t.Fatal(err)
-	}
 	_, err = New(Config{
-		StorageDir: storage,
-		TreeDir:    nested,
-		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		TreeDir: filepath.Join(t.TempDir(), "missing"),
+		Logger:  log,
 	})
 	if err == nil {
-		t.Fatal("tree inside storage")
+		t.Fatal("missing tree path")
+	}
+	file := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = New(Config{TreeDir: file, Logger: log})
+	if err == nil {
+		t.Fatal("file as tree")
+	}
+	dir := t.TempDir()
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Fatal(err)
+	}
+	_, err = New(Config{TreeDir: link, Logger: log})
+	if err == nil {
+		t.Fatal("symlink as tree")
 	}
 }
 
-func TestResolveStaysOnStorage(t *testing.T) {
+func TestResolveStaysOnTree(t *testing.T) {
 	tree := t.TempDir()
-	storage := t.TempDir()
-	s := newTreeServer(t, tree, storage)
+	s := newTreeServer(t, tree)
 	abs, clean, err := s.resolve("a.txt")
 	if err != nil {
 		t.Fatal(err)
@@ -239,8 +217,11 @@ func TestResolveStaysOnStorage(t *testing.T) {
 	if clean != "a.txt" {
 		t.Fatalf("clean %s", clean)
 	}
-	if !withinRoot(storage, abs) {
+	if !withinRoot(tree, abs) {
 		t.Fatalf("abs %s", abs)
+	}
+	if _, _, err := s.resolve(".git/config"); err != ErrPathInvalid {
+		t.Fatalf("ignored path err=%v", err)
 	}
 }
 

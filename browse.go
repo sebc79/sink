@@ -225,13 +225,13 @@ func (s *Server) renderLocatedFile(w http.ResponseWriter, r *http.Request, loc l
 		fv.ViewMode = "preview"
 	}
 	data := pageData{
-		Title:         fv.Name,
-		RelPath:       loc.rel,
-		IsFile:        true,
-		Breadcrumb:    s.breadcrumbs(loc.rel),
-		Tree:          s.buildTree(parentRel(loc.rel)),
-		File:   fv,
-		Parent: parentRel(loc.rel),
+		Title:      fv.Name,
+		RelPath:    loc.rel,
+		IsFile:     true,
+		Breadcrumb: s.breadcrumbs(loc.rel),
+		Tree:       s.buildTree(parentRel(loc.rel)),
+		File:       fv,
+		Parent:     parentRel(loc.rel),
 	}
 	s.renderPage(w, data)
 }
@@ -359,8 +359,16 @@ func isTextContent(ct string, body []byte) bool {
 	return strings.HasPrefix(http.DetectContentType(body), "text/")
 }
 
+func (s *Server) rootLabel() string {
+	base := filepath.Base(s.tree)
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		return "/"
+	}
+	return base
+}
+
 func (s *Server) breadcrumbs(rel string) []crumb {
-	out := []crumb{{Name: "storage", Path: ""}}
+	out := []crumb{{Name: s.rootLabel(), Path: ""}}
 	if rel == "" {
 		return out
 	}
@@ -387,6 +395,7 @@ func (s *Server) browseTitle(rel string) string {
 func (s *Server) buildTree(current string) []treeNode {
 	const maxNodes = 1500
 	var nodes int
+	rootDev, haveDev := s.treeDev()
 	var walk func(abs, rel string) []treeNode
 	walk = func(abs, rel string) []treeNode {
 		ents, err := os.ReadDir(abs)
@@ -398,9 +407,17 @@ func (s *Server) buildTree(current string) []treeNode {
 			if nodes >= maxNodes {
 				break
 			}
+			if ignoredName(d.Name()) {
+				continue
+			}
 			st, err := d.Info()
 			if err != nil || st.Mode()&os.ModeSymlink != 0 || !d.IsDir() {
 				continue
+			}
+			if haveDev {
+				if dev, ok := devOf(st); ok && dev != rootDev {
+					continue
+				}
 			}
 			child := d.Name()
 			if rel != "" {
@@ -421,7 +438,7 @@ func (s *Server) buildTree(current string) []treeNode {
 		}
 		return dirs
 	}
-	return walk(s.root, "")
+	return walk(s.tree, "")
 }
 
 func humanSize(n int64) string {

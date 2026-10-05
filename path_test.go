@@ -46,7 +46,7 @@ func TestCleanRel(t *testing.T) {
 func TestResolveContainment(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	s := &Server{root: dir}
+	s := &Server{tree: dir}
 	abs, clean, err := s.resolve("a/b.txt")
 	if err != nil {
 		t.Fatal(err)

@@ -150,7 +150,6 @@ func TestAwaitSilentPeerReturnsWithinHold(t *testing.T) {
 	}()
 	holdFor := 300 * time.Millisecond
 	s, err := New(Config{
-		StorageDir:  t.TempDir(),
 		TreeDir:     t.TempDir(),
 		PeerSocket:  sock,
 		HoldTimeout: holdFor,
@@ -172,7 +171,7 @@ func TestAwaitSilentPeerReturnsWithinHold(t *testing.T) {
 }
 
 func TestPollLocateBoundsRebuilds(t *testing.T) {
-	s := newTreeServer(t, t.TempDir(), t.TempDir())
+	s := newTreeServer(t, t.TempDir())
 	s.lastIndex = time.Time{}
 	s.rebuilds.Store(0)
 	const n = 24
@@ -201,7 +200,7 @@ func TestPollLocateBoundsRebuilds(t *testing.T) {
 func TestNewClampsHoldTimeout(t *testing.T) {
 	t.Parallel()
 	s, err := New(Config{
-		StorageDir:  t.TempDir(),
+		TreeDir:     t.TempDir(),
 		HoldTimeout: 5 * time.Minute,
 		Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})

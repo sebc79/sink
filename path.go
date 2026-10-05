@@ -10,12 +10,12 @@ import (
 )
 
 var (
-	ErrPathEscape  = errors.New("path escapes storage root")
+	ErrPathEscape  = errors.New("path escapes tree root")
 	ErrPathInvalid = errors.New("invalid path")
 )
 
-// cleanRel normalizes a storage-relative path to slash-separated form.
-// The storage root is represented by an empty string.
+// cleanRel normalizes a tree-relative path to slash-separated form.
+// The tree root is represented by an empty string.
 func cleanRel(rel string) (string, error) {
 	if strings.ContainsRune(rel, 0) || !utf8.ValidString(rel) {
 		return "", ErrPathInvalid
@@ -49,11 +49,14 @@ func (s *Server) resolve(rel string) (abs string, clean string, err error) {
 	if err != nil {
 		return "", "", err
 	}
-	abs = s.root
-	if clean != "" {
-		abs = filepath.Join(s.root, filepath.FromSlash(clean))
+	if hasIgnoredSegment(clean) {
+		return "", "", ErrPathInvalid
 	}
-	if !withinRoot(s.root, abs) {
+	abs = s.tree
+	if clean != "" {
+		abs = filepath.Join(s.tree, filepath.FromSlash(clean))
+	}
+	if !withinRoot(s.tree, abs) {
 		return "", "", ErrPathEscape
 	}
 	return abs, clean, nil

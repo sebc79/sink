@@ -66,9 +66,6 @@ func (idx *treeIndex) lookup(suffix string) []string {
 }
 
 func (s *Server) rebuildIndex() error {
-	if s.tree == "" {
-		return nil
-	}
 	files, byBase, err := scanTree(s.tree)
 	if err != nil {
 		return err
@@ -81,9 +78,6 @@ func (s *Server) rebuildIndex() error {
 }
 
 func (s *Server) maybeRebuildIndex() {
-	if s.tree == "" {
-		return
-	}
 	s.indexMu.Lock()
 	if s.indexBusy || (!s.lastIndex.IsZero() && time.Since(s.lastIndex) < indexRebuildMin) {
 		s.indexMu.Unlock()

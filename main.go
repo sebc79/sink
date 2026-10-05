@@ -11,8 +11,7 @@ import (
 
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
-	storage := flag.String("storage", "storage", "storage directory (created if missing)")
-	tree := flag.String("tree", "", "ArborSync checkout to read")
+	tree := flag.String("tree", "", "ArborSync checkout to read (required)")
 	peer := flag.String("peer-socket", "", "ArborSync peer socket")
 	sender := flag.String("sender-slave", "grok-bot-box", "slave id to watch while a view is held")
 	hold := flag.Duration("hold-timeout", 30*time.Second, "how long /view waits for a syncing file")
@@ -21,7 +20,6 @@ func main() {
 
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	srv, err := New(Config{
-		StorageDir:  *storage,
 		TreeDir:     *tree,
 		PeerSocket:  *peer,
 		SenderID:    *sender,
@@ -38,7 +36,7 @@ func main() {
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	log.Info("listen", "addr", *addr, "storage", srv.root, "tree", srv.tree)
+	log.Info("listen", "addr", *addr, "tree", srv.tree)
 	if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		fatal("listen: %v", err)
 	}

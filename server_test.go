@@ -17,20 +17,21 @@ import (
 func testServer(t *testing.T) *Server {
 	t.Helper()
 	s, err := New(Config{
-		StorageDir: t.TempDir(),
-		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		TreeDir: t.TempDir(),
+		Logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(s.stop)
 	return s
 }
 
-func TestGetFileFromStorage(t *testing.T) {
+func TestGetFile(t *testing.T) {
 	s := testServer(t)
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
-	writeRel(t, s.root, "docs/notes.txt", "hello sink")
+	writeRel(t, s.tree, "docs/notes.txt", "hello sink")
 
 	got, err := http.Get(ts.URL + "/api/file/docs/notes.txt")
 	if err != nil {
@@ -47,7 +48,7 @@ func TestArchiveDownload(t *testing.T) {
 	s := testServer(t)
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
-	writeRel(t, s.root, "docs/a.txt", "aaa")
+	writeRel(t, s.tree, "docs/a.txt", "aaa")
 
 	res, err := http.Get(ts.URL + "/api/archive/docs?format=zip")
 	if err != nil {
@@ -137,7 +138,7 @@ func TestBrowseAndViewHTML(t *testing.T) {
 	s := testServer(t)
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
-	writeRel(t, s.root, "readme.md", "# hello")
+	writeRel(t, s.tree, "readme.md", "# hello")
 
 	res, err := http.Get(ts.URL + "/")
 	if err != nil {
@@ -189,7 +190,7 @@ func TestViewHasFullScreenButton(t *testing.T) {
 		"x.bin":   "\x00\x01\x02\x03",
 	}
 	for name, body := range files {
-		writeRel(t, s.root, name, body)
+		writeRel(t, s.tree, name, body)
 
 		res, err := http.Get(ts.URL + "/view/" + name)
 		if err != nil {
@@ -219,12 +220,14 @@ func TestViewHasFullScreenButton(t *testing.T) {
 	}
 }
 
-func TestTreeListingFromStorage(t *testing.T) {
+func TestTreeListing(t *testing.T) {
 	s := testServer(t)
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
-	writeRel(t, s.root, "vendor/lib/mod.go", "package mod")
-	writeRel(t, s.root, "vendor/lib/sub/x.txt", "x")
+	writeRel(t, s.tree, "vendor/lib/mod.go", "package mod")
+	writeRel(t, s.tree, "vendor/lib/sub/x.txt", "x")
+	writeRel(t, s.tree, "vendor/.git/config", "git")
+	writeRel(t, s.tree, "vendor/.arborsync-tmp/scratch", "tmp")
 
 	tree, err := http.Get(ts.URL + "/api/tree/vendor/lib?recursive=1")
 	if err != nil {
@@ -237,5 +240,29 @@ func TestTreeListingFromStorage(t *testing.T) {
 	}
 	if !listing.OK || listing.Type != "directory" || len(listing.Entries) < 2 {
 		t.Fatalf("tree %+v", listing)
+	}
+
+	res, err := http.Get(ts.URL + "/api/tree/vendor?recursive=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var vendor treeResponse
+	if err := json.NewDecoder(res.Body).Decode(&vendor); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range vendor.Entries {
+		if hasIgnoredSegment(e.Path) || strings.Contains(e.Path, ".git") || strings.Contains(e.Path, ".arborsync-tmp") {
+			t.Fatalf("listed ignored %q", e.Path)
+		}
+	}
+
+	res, err = http.Get(ts.URL + "/api/tree/.git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusBadRequest {
+		t.Fatalf("ignored tree path status %d", res.StatusCode)
 	}
 }

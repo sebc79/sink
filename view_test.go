@@ -1,6 +1,8 @@
 package main
 
 import (
+	"archive/zip"
+	"bytes"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,15 +18,16 @@ import (
 
 func TestViewTreeBrowseAndResolve(t *testing.T) {
 	tree := filepath.Join(t.TempDir(), "knowledge")
-	storage := t.TempDir()
 	if err := os.MkdirAll(tree, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeRel(t, tree, "projects/alpha/notes/keep.md", "alpha-keep")
 	writeRel(t, tree, "projects/beta/notes/keep.md", "beta-keep")
 	writeRel(t, tree, "projects/gamma/unique.md", "unique-body")
-	writeRel(t, storage, "only-storage/note.txt", "stored-body")
-	s := newTreeServer(t, tree, storage)
+	writeRel(t, tree, "projects/gamma/extra.txt", "extra")
+	writeRel(t, tree, ".git/config", "git")
+	writeRel(t, tree, ".arborsync-tmp/scratch.md", "tmp")
+	s := newTreeServer(t, tree)
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
 
@@ -36,17 +39,32 @@ func TestViewTreeBrowseAndResolve(t *testing.T) {
 	if res.StatusCode != 200 {
 		t.Fatalf("browse %d %s", res.StatusCode, body)
 	}
-	if !strings.Contains(body, ">storage<") {
-		t.Fatalf("crumb: %s", body)
+	if strings.Contains(body, ">storage<") {
+		t.Fatalf("storage crumb leftover: %s", body)
 	}
-	if strings.Contains(body, "/browse/projects") {
-		t.Fatalf("browse listed tree: %s", body)
+	if !strings.Contains(body, ">knowledge<") {
+		t.Fatalf("tree crumb: %s", body)
 	}
-	if !strings.Contains(body, "/browse/only-storage") {
-		t.Fatalf("storage listing: %s", body)
+	if !strings.Contains(body, "/browse/projects") {
+		t.Fatalf("browse missed tree: %s", body)
+	}
+	if strings.Contains(body, ".git") || strings.Contains(body, ".arborsync-tmp") {
+		t.Fatalf("browse listed ignored: %s", body)
 	}
 	if res.Header.Get("Referrer-Policy") != "same-origin" {
 		t.Fatalf("referrer %q", res.Header.Get("Referrer-Policy"))
+	}
+
+	res, err = http.Get(ts.URL + "/browse/projects/gamma")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readAll(t, res)
+	if res.StatusCode != 200 {
+		t.Fatalf("folder %d %s", res.StatusCode, body)
+	}
+	if !strings.Contains(body, "unique.md") || !strings.Contains(body, "extra.txt") {
+		t.Fatalf("folder listing: %s", body)
 	}
 
 	res, err = http.Get(ts.URL + "/view/projects/gamma/unique.md")
@@ -56,15 +74,6 @@ func TestViewTreeBrowseAndResolve(t *testing.T) {
 	body = readAll(t, res)
 	if res.StatusCode != 200 || !strings.Contains(body, "unique-body") {
 		t.Fatalf("exact %d %s", res.StatusCode, body)
-	}
-
-	res, err = http.Get(ts.URL + "/view/only-storage/note.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body = readAll(t, res)
-	if res.StatusCode != 200 || !strings.Contains(body, "stored-body") {
-		t.Fatalf("storage %d %s", res.StatusCode, body)
 	}
 
 	noFollow := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
@@ -106,10 +115,47 @@ func TestViewTreeBrowseAndResolve(t *testing.T) {
 	}
 }
 
+func TestBrowseArchiveTreeFolder(t *testing.T) {
+	tree := t.TempDir()
+	writeRel(t, tree, "projects/gamma/unique.md", "unique-body")
+	writeRel(t, tree, "projects/gamma/extra.txt", "extra")
+	writeRel(t, tree, "projects/gamma/.git/config", "git")
+	s := newTreeServer(t, tree)
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+
+	res, err := http.Get(ts.URL + "/api/archive/projects/gamma?format=zip")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != 200 {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+	b, err := io.ReadAll(res.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(b), int64(len(b)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, f := range zr.File {
+		names = append(names, f.Name)
+		if strings.Contains(f.Name, ".git") {
+			t.Fatalf("archived ignored %s", f.Name)
+		}
+	}
+	joined := strings.Join(names, "\n")
+	if !strings.Contains(joined, "unique.md") || !strings.Contains(joined, "extra.txt") {
+		t.Fatalf("zip entries: %v", names)
+	}
+}
+
 func TestViewHoldFileAppears(t *testing.T) {
 	tree := t.TempDir()
-	storage := t.TempDir()
-	s := newTreeServer(t, tree, storage)
+	s := newTreeServer(t, tree)
 	s.holdFor = 4 * time.Second
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
@@ -133,14 +179,13 @@ func TestViewHoldFileAppears(t *testing.T) {
 
 func TestViewHoldRefusesStaleMtime(t *testing.T) {
 	tree := t.TempDir()
-	storage := t.TempDir()
 	writeRel(t, tree, "projects/old.md", "STALE-BYTES-NOT-SERVED")
 	path := filepath.Join(tree, "projects", "old.md")
 	old := time.Unix(1_700_000_000, 0)
 	if err := os.Chtimes(path, old, old); err != nil {
 		t.Fatal(err)
 	}
-	s := newTreeServer(t, tree, storage)
+	s := newTreeServer(t, tree)
 	s.holdFor = 400 * time.Millisecond
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
@@ -177,14 +222,13 @@ func TestViewHoldRefusesStaleMtime(t *testing.T) {
 
 func TestViewHoldDeadSenderRefusesStale(t *testing.T) {
 	tree := t.TempDir()
-	storage := t.TempDir()
 	writeRel(t, tree, "projects/old.md", "STALE-BYTES-NOT-SERVED")
 	path := filepath.Join(tree, "projects", "old.md")
 	old := time.Unix(1_700_000_000, 0)
 	if err := os.Chtimes(path, old, old); err != nil {
 		t.Fatal(err)
 	}
-	s := newTreeServer(t, tree, storage)
+	s := newTreeServer(t, tree)
 	s.holdFor = 5 * time.Second
 	s.peerSocket = "peers.sock"
 	s.queryPeers = func(string) (peers.Snapshot, error) {
@@ -213,14 +257,13 @@ func TestViewHoldDeadSenderRefusesStale(t *testing.T) {
 
 func TestViewServesFreshMtime(t *testing.T) {
 	tree := t.TempDir()
-	storage := t.TempDir()
 	writeRel(t, tree, "projects/fresh.md", "fresh-bytes")
 	path := filepath.Join(tree, "projects", "fresh.md")
 	when := time.Unix(1_700_000_100, 0)
 	if err := os.Chtimes(path, when, when); err != nil {
 		t.Fatal(err)
 	}
-	s := newTreeServer(t, tree, storage)
+	s := newTreeServer(t, tree)
 	s.holdFor = 5 * time.Second
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
@@ -248,13 +291,12 @@ func TestViewServesFreshMtime(t *testing.T) {
 
 func TestViewRejectsMidPathSymlink(t *testing.T) {
 	tree := t.TempDir()
-	storage := t.TempDir()
 	outside := t.TempDir()
 	writeRel(t, outside, "nested/secret.md", "OUTSIDE-SECRET")
 	if err := os.Symlink(filepath.Join(outside, "nested"), filepath.Join(tree, "linked")); err != nil {
 		t.Fatal(err)
 	}
-	s := newTreeServer(t, tree, storage)
+	s := newTreeServer(t, tree)
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
 	res, err := http.Get(ts.URL + "/view/linked/secret.md")
@@ -270,48 +312,8 @@ func TestViewRejectsMidPathSymlink(t *testing.T) {
 	}
 }
 
-func TestViewMtimeDoesNotServeStorage(t *testing.T) {
-	tree := t.TempDir()
-	storage := t.TempDir()
-	writeRel(t, storage, "projects/only-store.md", "STORAGE-BYTES")
-	s := newTreeServer(t, tree, storage)
-	s.holdFor = 200 * time.Millisecond
-	ts := httptest.NewServer(s.Handler())
-	t.Cleanup(ts.Close)
-	client := &http.Client{Timeout: 2 * time.Second}
-	res, err := client.Get(ts.URL + "/view/projects/only-store.md?mtime=1700000100")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := readAll(t, res)
-	if res.StatusCode != http.StatusNotFound || strings.Contains(body, "STORAGE-BYTES") {
-		t.Fatalf("status %d %s", res.StatusCode, body)
-	}
-}
-
-func TestViewStorageBeatsFuzzyTree(t *testing.T) {
-	tree := t.TempDir()
-	storage := t.TempDir()
-	writeRel(t, tree, "projects/x/keep.md", "tree-keep")
-	writeRel(t, storage, "keep.md", "storage-keep")
-	s := newTreeServer(t, tree, storage)
-	ts := httptest.NewServer(s.Handler())
-	t.Cleanup(ts.Close)
-	res, err := http.Get(ts.URL + "/view/keep.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := readAll(t, res)
-	if res.StatusCode != 200 || !strings.Contains(body, "storage-keep") {
-		t.Fatalf("status %d %s", res.StatusCode, body)
-	}
-	if strings.Contains(body, "tree-keep") {
-		t.Fatalf("served fuzzy tree: %s", body)
-	}
-}
-
 func TestViewHoldBusy(t *testing.T) {
-	s := newTreeServer(t, t.TempDir(), t.TempDir())
+	s := newTreeServer(t, t.TempDir())
 	for i := 0; i < maxConcurrentHolds; i++ {
 		s.holds <- struct{}{}
 	}
@@ -336,7 +338,7 @@ func TestViewHoldBusy(t *testing.T) {
 }
 
 func TestViewInvalidMtime(t *testing.T) {
-	s := newTreeServer(t, t.TempDir(), t.TempDir())
+	s := newTreeServer(t, t.TempDir())
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
 	res, err := http.Get(ts.URL + "/view/notes.md?mtime=nope")

@@ -170,7 +170,7 @@ func TestMarkdownViewHTML(t *testing.T) {
 	t.Cleanup(ts.Close)
 
 	body := "# Title\n\nSee $E=mc^2$ and:\n\n$$\n\\int_0^1 x dx\n$$\n"
-	writeRel(t, s.root, "notes/doc.md", body)
+	writeRel(t, s.tree, "notes/doc.md", body)
 
 	res, err := http.Get(ts.URL + "/view/notes/doc.md")
 	if err != nil {
@@ -220,7 +220,7 @@ func TestNonMarkdownViewHasNoKatex(t *testing.T) {
 	s := testServer(t)
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
-	writeRel(t, s.root, "a.txt", "plain")
+	writeRel(t, s.tree, "a.txt", "plain")
 	res, err := http.Get(ts.URL + "/view/a.txt")
 	if err != nil {
 		t.Fatal(err)
