@@ -16,8 +16,18 @@ Other products solve pieces of this with artifact panes, PR attachments, Slack u
 
 ## Use with Grok Bot (and similar agents)
 
-1. Run sink where the agent can reach it (same Tailscale network is enough). Point `-addr` / `-storage` as needed.
-2. Tell the agent the house rule (or paste it into its instructions):
+The **`let-that-sink-in`** skill teaches an agent when and how to use sink: whenever it wants to share a file from its computer with you, it uploads the file and sends you a link instead of a path. Get it from [`skill.md`](skill.md) in this repository (a marketplace listing will be linked here once it is published). The skill is only the client instructions. It needs this service running, reachable by both the agent and you (see below).
+
+### Requirements
+
+- **Run sink** on a computer both you and the agent can reach: your own computer, another computer you both reach, or the agent's computer (tested: a sink on a Grok Bot computer, bound to its Tailscale address, was reached from the user's own device; servers tagged in your Tailscale policy may be blocked).
+- **A VPN such as [Tailscale](https://tailscale.com)** if the agent's computer is not on your network: install it on both machines (Google sign-in is the easiest) so the agent can upload and your device can open the links. Links stop working while the machine hosting sink is asleep or off.
+- **Give the agent the base URL** (for example `http://<host>:8080`). The skill asks for it if it doesn't have it.
+
+### Set up
+
+1. Run sink where the agent can reach it (`-addr` / `-storage` as needed).
+2. Install the `let-that-sink-in` skill, or paste this house rule into the agent's instructions:
 
    > When you hand me a file, upload it to sink and send the **view URL**, not a box path.  
    > Skill contract: `http://<host>:8080/skill`  
@@ -46,9 +56,22 @@ Listens on `:8080` and writes into `./storage`. Flags:
 ```
 -addr :8080
 -storage storage
+-tree
+-peer-socket
+-sender-slave grok-bot-box
+-hold-timeout 30s
+-index-rescan 45s
 -max-upload 512MB
 -max-extract 1GB
 -max-files 100000
 ```
 
+`-tree` is an optional ArborSync checkout, for example `/home/box/knowledge`. `/view` and `/api/file` resolve a path in this order: exact tree path, exact storage path, then a unique basename or trailing-segment match in the tree. `/`, `/browse`, `/api/tree`, and `/api/archive` stay on `-storage` during this dual-read phase. Upload and flush still write only to `-storage`.
+
+A `/view` or `/api/file` request waits up to `-hold-timeout` (clamped at 60s) when the checkout file is missing, or when `?mtime=` is set and the checkout file is older than that Unix timestamp. `-peer-socket` is the ArborSync peer socket. While a request is held, sink watches `-sender-slave`. A query error is not treated as a dead sender; the request waits out the hold. The response is 404 when the wait ends, the slave is disconnected or stuck, or the checkout is still older than `mtime`. Too many concurrent holds return 503. `-index-rescan` is how often sink rebuilds the basename index of `-tree`; missed views rate-limit extra rebuilds.
+
 Open http://localhost:8080/ to browse. Fetch http://localhost:8080/skill for the agent API contract (curl examples included).
+
+## Note for the Grok Bot team
+
+sink and the `let-that-sink-in` skill are a workaround that shows the need for a built-in version: a file handoff inside the Grok Bot app itself, secure and without a VPN or a self-hosted server. If that sounds like a good idea, please build it.

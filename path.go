@@ -53,11 +53,18 @@ func (s *Server) resolve(rel string) (abs string, clean string, err error) {
 	if clean != "" {
 		abs = filepath.Join(s.root, filepath.FromSlash(clean))
 	}
-	relToRoot, err := filepath.Rel(s.root, abs)
-	if err != nil || relToRoot == ".." || strings.HasPrefix(relToRoot, ".."+string(os.PathSeparator)) {
+	if !withinRoot(s.root, abs) {
 		return "", "", ErrPathEscape
 	}
 	return abs, clean, nil
+}
+
+func withinRoot(root, abs string) bool {
+	rel, err := filepath.Rel(root, abs)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
 }
 
 func urlPath(rel string) string {

@@ -14,6 +14,11 @@ import (
 func main() {
 	addr := flag.String("addr", ":8080", "listen address")
 	storage := flag.String("storage", "storage", "storage directory (created if missing)")
+	tree := flag.String("tree", "", "ArborSync checkout to read")
+	peer := flag.String("peer-socket", "", "ArborSync peer socket")
+	sender := flag.String("sender-slave", "grok-bot-box", "slave id to watch while a view is held")
+	hold := flag.Duration("hold-timeout", 30*time.Second, "how long /view waits for a syncing file")
+	rescan := flag.Duration("index-rescan", 45*time.Second, "how often to rescan -tree")
 	maxUpload := flag.String("max-upload", "512MB", "maximum upload size (e.g. 64MB, 1G)")
 	maxExtract := flag.String("max-extract", "1GB", "maximum uncompressed archive size")
 	maxFiles := flag.Int("max-files", defaultMaxFiles, "maximum files extracted from one archive")
@@ -30,11 +35,16 @@ func main() {
 
 	log := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	srv, err := New(Config{
-		StorageDir: *storage,
-		MaxUpload:  up,
-		MaxExtract: ex,
-		MaxFiles:   *maxFiles,
-		Logger:     log,
+		StorageDir:  *storage,
+		TreeDir:     *tree,
+		PeerSocket:  *peer,
+		SenderID:    *sender,
+		HoldTimeout: *hold,
+		IndexRescan: *rescan,
+		MaxUpload:   up,
+		MaxExtract:  ex,
+		MaxFiles:    *maxFiles,
+		Logger:      log,
 	})
 	if err != nil {
 		fatal("init: %v", err)
@@ -45,7 +55,7 @@ func main() {
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	log.Info("listen", "addr", *addr, "storage", srv.root)
+	log.Info("listen", "addr", *addr, "storage", srv.root, "tree", srv.tree)
 	if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		fatal("listen: %v", err)
 	}

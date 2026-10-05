@@ -10,6 +10,8 @@ Type=simple
 User=sink
 Group=sink
 WorkingDirectory=/opt/sink
+# Example only. Pass -tree when this host has an ArborSync checkout.
+# ExecStart=/opt/sink/bin/sink -addr :8080 -storage storage -tree /home/box/knowledge -peer-socket /var/cache/arborsync/peers.sock
 ExecStart=/opt/sink/bin/sink -addr :8080 -storage storage
 Restart=on-failure
 RestartSec=3

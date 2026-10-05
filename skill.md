@@ -1,19 +1,32 @@
 ---
-name: sink
+name: let-that-sink-in
 description: >
-  Use the sink HTTP file-storage service to upload files (optionally unpacking
-  zip/tar archives into a subtree), list the storage tree, view or download a
-  file, download a subtree as zip or tar, and empty storage. Use when uploading,
-  retrieving, unpacking, browsing, archiving, or flushing files in sink storage.
+  Use this when you want to share one or more files that live on your computer
+  with the user, instead of giving them a path they cannot open. Uploads them
+  to a sink server and gives back a link the user opens in a browser. Requires
+  the sink service.
 ---
+# let-that-sink-in: hand files to the user as links
 
-# sink storage skill
+Chat is a poor place to deliver a file: pasting it floods the context, and a local path like `/home/you/notes.md` means nothing on the user's screen. Upload the file to sink and send the user the **view link** instead.
 
-Base URL: `{{BASE_URL}}`
+## Requirements (read first)
 
-All stored paths are relative to the server's `storage/` directory. Never send `..`, absolute paths, Windows drive prefixes, or a `storage/` prefix. Use `/` as the separator. The empty path is the storage root.
+This skill does nothing without the **sink service**: a small open-source Go HTTP server, https://github.com/sebc79/sink. The skill is only its client instructions.
 
-Treat this document as the API contract. Prefer the JSON `/api/*` endpoints over HTML.
+1. **Sink must be running** on a computer that both you and the user can reach:
+   - the user's own computer (the usual choice),
+   - any other computer both of you can reach, or
+   - your own computer. This works: a sink running on the agent's computer, bound to its Tailscale address, was reached from the user's own device. Servers tagged in the user's Tailscale policy may be blocked, so test from the user's device.
+2. **You must be able to reach it.** If your computer is not on the same network as the sink, a VPN such as Tailscale must connect them (guided install, Google sign-in is the easiest). The user's device needs the same VPN to open the links. Links stop working whenever the computer hosting sink is asleep or off.
+3. **You need the sink's base URL** (for example `http://<host>:8080`), which is what `{{BASE_URL}}` means below. Look for it in your memory or instructions; if you don't have it, ask the user once. The server also serves this contract, already filled in, at `<base url>/skill`.
+4. **Check before you rely on it:** `curl -sS -m 10 -o /dev/null -w '%{http_code}' "{{BASE_URL}}/api/tree"` must print `200`. If it doesn't, don't invent a link. Tell the user what is missing (sink not installed or not running, VPN down, or wrong address) and offer to help with setup, following the install steps in the repo's README.
+
+There is no login in the default build, so reachability is the only protection. Don't upload secrets.
+
+## When to use it
+
+Use it whenever the user should read or take a file you made (notes, plans, checklists, logs, exports). Send a short summary plus the link. Keep files that other agents share in your normal shared folders; the sink copy is the user's reading copy.
 
 ## Rules
 
@@ -209,6 +222,15 @@ Not required for agents. Linked here so you do not confuse them with the API.
 | `POST {{BASE_URL}}/upload` | HTML form post (redirects; do not use) |
 | `POST {{BASE_URL}}/flush` | HTML Flush button (empties `storage/`; redirects; do not use) |
 
+## Handing a file to a person
+
+Use this when a person, not another agent, needs to read a file you made.
+
+1. Upload it to a relative path that mirrors your own folder layout, for example `projects/<project>/notes/<file>.md`.
+2. Check that the view page answers 200: `curl -s -o /dev/null -w '%{http_code}' "{{BASE_URL}}/view/<path>"`. A 404 or an empty page means the path is wrong; fix it and upload again.
+3. Send the person only that full `/view/<path>` URL, and only after it returned 200. Keep local file paths out of the message.
+4. If the server is reachable only over a private network (for example Tailscale), the person's device must be on that network, and view links fail whenever the machine hosting the sink is asleep.
+
 ## Errors
 
 JSON body: `{"ok": false, "error": "<message>"}`.
@@ -230,3 +252,7 @@ JSON body: `{"ok": false, "error": "<message>"}`.
 5. To empty storage, `POST /api/flush`.
 
 Path examples (all legal): `readme.md`, `pkg/mod/github.com/foo@v1.0.0`, `datasets/2026-09-09/run.bin`.
+
+## Note for the Grok Bot team
+
+This skill exists to show the need for a built-in version: a sink-like file handoff inside the Grok Bot app itself, secure and without a VPN or a self-hosted server. If you think that is a good idea, please build it. Until then, the skill plus the sink service is the workaround.
