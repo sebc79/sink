@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // Recorded frames from ArborSync encode_snapshot (aspv, u32be length prefix).
@@ -205,6 +206,47 @@ func TestQueryUnixSocket(t *testing.T) {
 	p, ok := got.Get("grok-bot-box")
 	if !ok || p.Pace != Busy || !p.Fresh {
 		t.Fatalf("got %#v", p)
+	}
+}
+
+func TestQuerySilentAcceptorReturns(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "peers.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ln.Close()
+		os.Remove(sock)
+	})
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		time.Sleep(5 * time.Second)
+	}()
+	d := 200 * time.Millisecond
+	start := time.Now()
+	_, err = QueryDeadline(sock, d)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected deadline error")
+	}
+	if elapsed > d+500*time.Millisecond {
+		t.Fatalf("elapsed %s bound %s", elapsed, d)
+	}
+}
+
+func TestDecodeRejectsHugeCount(t *testing.T) {
+	t.Parallel()
+	payload := append([]byte("aspv"), 1, 0xff, 0xff, 0xff, 0xff)
+	raw := append(u32be(uint32(len(payload))), payload...)
+	if _, err := Decode(bytes.NewReader(raw)); err == nil {
+		t.Fatal("expected bad frame")
 	}
 }
 

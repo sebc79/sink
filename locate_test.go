@@ -163,6 +163,25 @@ func TestLocatePaths(t *testing.T) {
 	}
 }
 
+func TestLocateStorageBeatsFuzzyTree(t *testing.T) {
+	tree := t.TempDir()
+	storage := t.TempDir()
+	writeRel(t, tree, "projects/x/keep.md", "tree-keep")
+	writeRel(t, storage, "keep.md", "storage-keep")
+	s := newTreeServer(t, tree, storage)
+	loc, err := s.locate("keep.md", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loc.kind != locateHit || loc.fromTree || loc.rel != "keep.md" {
+		t.Fatalf("loc=%#v", loc)
+	}
+	body, err := os.ReadFile(loc.abs)
+	if err != nil || string(body) != "storage-keep" {
+		t.Fatalf("body %q %v", body, err)
+	}
+}
+
 func TestLocateMatchCap(t *testing.T) {
 	tree := t.TempDir()
 	storage := t.TempDir()

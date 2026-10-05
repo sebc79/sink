@@ -74,7 +74,31 @@ func (s *Server) rebuildIndex() error {
 		return err
 	}
 	s.index.replace(files, byBase)
+	s.indexMu.Lock()
+	s.lastIndex = time.Now()
+	s.indexMu.Unlock()
 	return nil
+}
+
+func (s *Server) maybeRebuildIndex() {
+	if s.tree == "" {
+		return
+	}
+	s.indexMu.Lock()
+	if s.indexBusy || (!s.lastIndex.IsZero() && time.Since(s.lastIndex) < indexRebuildMin) {
+		s.indexMu.Unlock()
+		return
+	}
+	s.indexBusy = true
+	s.indexMu.Unlock()
+	s.rebuilds.Add(1)
+	err := s.rebuildIndex()
+	s.indexMu.Lock()
+	s.indexBusy = false
+	s.indexMu.Unlock()
+	if err != nil && s.log != nil {
+		s.log.Info("index", "err", err)
+	}
 }
 
 func (s *Server) indexLoop(ctx context.Context) {

@@ -100,30 +100,28 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) renderBrowse(w http.ResponseWriter, r *http.Request, rel, errMsg, okMsg string) {
-	loc, err := s.locate(rel, r.Referer())
+	abs, clean, err := s.resolve(rel)
 	if err != nil {
-		s.writeReadErr(w, r, err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	switch loc.kind {
-	case locateInvalid:
-		http.Error(w, ErrPathInvalid.Error(), http.StatusBadRequest)
-		return
-	case locateAmbiguous:
-		s.renderAmbiguous(w, r, loc)
-		return
-	case locateMiss:
-		http.Error(w, "not found", http.StatusNotFound)
-		return
-	case locateHit:
-		http.Redirect(w, r, "/view/"+urlPath(loc.rel), http.StatusSeeOther)
-		return
-	case locateDir:
-	default:
-		http.Error(w, "not found", http.StatusNotFound)
+	st, err := os.Lstat(abs)
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	abs, clean := loc.abs, loc.rel
+	if st.Mode()&os.ModeSymlink != 0 {
+		http.Error(w, "symlinks are not served", http.StatusForbidden)
+		return
+	}
+	if !st.IsDir() {
+		http.Redirect(w, r, "/view/"+urlPath(clean), http.StatusSeeOther)
+		return
+	}
 
 	entries, _, err := s.listEntries(abs, clean, false)
 	if err != nil {
@@ -177,6 +175,11 @@ func (s *Server) handleView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !readyLocated(loc, want) {
+		if !s.tryHold() {
+			http.Error(w, errHoldBusy.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		defer s.releaseHold()
 		loc, err = s.await(r.Context(), suffix, r.Referer(), want)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
@@ -378,20 +381,8 @@ func isTextContent(ct string, body []byte) bool {
 	return strings.HasPrefix(http.DetectContentType(body), "text/")
 }
 
-func treeCrumbName(tree string) string {
-	base := filepath.Base(tree)
-	if base == "" || base == "." || base == string(filepath.Separator) {
-		return "tree"
-	}
-	return base
-}
-
 func (s *Server) breadcrumbs(rel string) []crumb {
-	name := "storage"
-	if s.tree != "" {
-		name = treeCrumbName(s.tree)
-	}
-	out := []crumb{{Name: name, Path: ""}}
+	out := []crumb{{Name: "storage", Path: ""}}
 	if rel == "" {
 		return out
 	}
@@ -417,19 +408,6 @@ func (s *Server) browseTitle(rel string) string {
 
 func (s *Server) buildTree(current string) []treeNode {
 	const maxNodes = 1500
-	root := s.root
-	treeList := false
-	if s.tree != "" {
-		root = s.tree
-		treeList = true
-	}
-	var rootDev uint64
-	var haveDev bool
-	if treeList {
-		if ri, err := os.Lstat(root); err == nil {
-			rootDev, haveDev = devOf(ri)
-		}
-	}
 	var nodes int
 	var walk func(abs, rel string) []treeNode
 	walk = func(abs, rel string) []treeNode {
@@ -445,14 +423,6 @@ func (s *Server) buildTree(current string) []treeNode {
 			st, err := d.Info()
 			if err != nil || st.Mode()&os.ModeSymlink != 0 || !d.IsDir() {
 				continue
-			}
-			if treeList && ignoredName(d.Name()) {
-				continue
-			}
-			if treeList && haveDev {
-				if dev, ok := devOf(st); ok && dev != rootDev {
-					continue
-				}
 			}
 			child := d.Name()
 			if rel != "" {
@@ -473,7 +443,7 @@ func (s *Server) buildTree(current string) []treeNode {
 		}
 		return dirs
 	}
-	return walk(root, "")
+	return walk(s.root, "")
 }
 
 func humanSize(n int64) string {

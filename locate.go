@@ -63,6 +63,17 @@ func (s *Server) locate(suffix, referer string) (located, error) {
 				return loc, nil
 			}
 		}
+	}
+	for _, c := range cands {
+		loc, err := s.statLocated(s.root, c, cleaned, false)
+		if err != nil {
+			return loc, err
+		}
+		if loc.kind == locateHit || loc.kind == locateDir {
+			return loc, nil
+		}
+	}
+	if s.tree != "" {
 		for _, c := range cands {
 			if c == "" {
 				continue
@@ -88,15 +99,6 @@ func (s *Server) locate(suffix, referer string) (located, error) {
 				matches:   shown,
 				truncated: trunc,
 			}, nil
-		}
-	}
-	for _, c := range cands {
-		loc, err := s.statLocated(s.root, c, cleaned, false)
-		if err != nil {
-			return loc, err
-		}
-		if loc.kind == locateHit || loc.kind == locateDir {
-			return loc, nil
 		}
 	}
 	return located{kind: locateMiss, suffix: cleaned}, nil

@@ -14,18 +14,27 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"sink/peers"
 )
 
 const (
-	defaultMaxUpload  int64 = 512 << 20
-	defaultMaxExtract int64 = 1 << 30
-	defaultMaxFiles         = 100_000
-	maxTreeEntries          = 10_000
-	maxViewBytes            = 1 << 20
+	defaultMaxUpload   int64 = 512 << 20
+	defaultMaxExtract  int64 = 1 << 30
+	defaultMaxFiles          = 100_000
+	maxTreeEntries           = 10_000
+	maxViewBytes             = 1 << 20
+	maxHoldTimeout           = 60 * time.Second
+	maxConcurrentHolds       = 32
+	indexRebuildMin          = 2 * time.Second
+	peerCacheTTL             = 250 * time.Millisecond
+	peerQueryBound           = 2 * time.Second
 )
+
+var errHoldBusy = errors.New("too many held views")
 
 type Server struct {
 	root       string
@@ -37,6 +46,15 @@ type Server struct {
 	index      *treeIndex
 	queryPeers func(string) (peers.Snapshot, error)
 	stopIndex  func()
+	holds      chan struct{}
+	indexMu    sync.Mutex
+	indexBusy  bool
+	lastIndex  time.Time
+	rebuilds   atomic.Int64
+	peerMu     sync.Mutex
+	peerSnap   peers.Snapshot
+	peerErr    error
+	peerAt     time.Time
 	maxUpload  int64
 	maxExtract int64
 	maxFiles   int
@@ -81,11 +99,20 @@ func New(cfg Config) (*Server, error) {
 	if cfg.HoldTimeout <= 0 {
 		cfg.HoldTimeout = 30 * time.Second
 	}
+	if cfg.HoldTimeout > maxHoldTimeout {
+		cfg.HoldTimeout = maxHoldTimeout
+	}
 	if cfg.IndexRescan <= 0 {
 		cfg.IndexRescan = 45 * time.Second
 	}
 	if cfg.QueryPeers == nil {
-		cfg.QueryPeers = peers.Query
+		cfg.QueryPeers = func(socket string) (peers.Snapshot, error) {
+			d := peerQueryBound
+			if cfg.HoldTimeout > 0 && cfg.HoldTimeout < d {
+				d = cfg.HoldTimeout
+			}
+			return peers.QueryDeadline(socket, d)
+		}
 	}
 	abs, err := filepath.Abs(cfg.StorageDir)
 	if err != nil {
@@ -112,6 +139,7 @@ func New(cfg Config) (*Server, error) {
 		index:      &treeIndex{byBase: map[string][]string{}},
 		queryPeers: cfg.QueryPeers,
 		stopIndex:  cancel,
+		holds:      make(chan struct{}, maxConcurrentHolds),
 		maxUpload:  cfg.MaxUpload,
 		maxExtract: cfg.MaxExtract,
 		maxFiles:   cfg.MaxFiles,
@@ -234,27 +262,6 @@ func (s *Server) handleSkill(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.WriteString(w, body)
 }
 
-func (s *Server) locateNow(w http.ResponseWriter, r *http.Request) (located, bool) {
-	loc, err := s.locate(s.requestPath(r), r.Referer())
-	if err != nil {
-		s.writeReadErr(w, r, err)
-		return located{}, false
-	}
-	switch loc.kind {
-	case locateInvalid:
-		s.writeError(w, r, http.StatusBadRequest, ErrPathInvalid)
-		return located{}, false
-	case locateAmbiguous:
-		s.writeError(w, r, http.StatusConflict, fmt.Errorf("ambiguous path %s", loc.suffix))
-		return located{}, false
-	case locateMiss:
-		s.writeError(w, r, http.StatusNotFound, fmt.Errorf("not found"))
-		return located{}, false
-	default:
-		return loc, true
-	}
-}
-
 func (s *Server) writeReadStop(w http.ResponseWriter, r *http.Request, loc located, html bool) bool {
 	switch loc.kind {
 	case locateInvalid:
@@ -318,6 +325,11 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !readyLocated(loc, want) {
+		if !s.tryHold() {
+			s.writeError(w, r, http.StatusServiceUnavailable, errHoldBusy)
+			return
+		}
+		defer s.releaseHold()
 		loc, err = s.await(r.Context(), suffix, r.Referer(), want)
 		if err != nil {
 			if errors.Is(err, context.Canceled) {
@@ -387,11 +399,11 @@ func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
-	loc, ok := s.locateNow(w, r)
-	if !ok {
+	abs, clean, err := s.resolve(s.requestPath(r))
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, err)
 		return
 	}
-	abs, clean := loc.abs, loc.rel
 	st, err := os.Lstat(abs)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -432,11 +444,11 @@ func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleArchive(w http.ResponseWriter, r *http.Request) {
-	loc, ok := s.locateNow(w, r)
-	if !ok {
+	abs, clean, err := s.resolve(s.requestPath(r))
+	if err != nil {
+		s.writeError(w, r, http.StatusBadRequest, err)
 		return
 	}
-	abs, clean := loc.abs, loc.rel
 	if _, err := os.Lstat(abs); err != nil {
 		if os.IsNotExist(err) {
 			s.writeError(w, r, http.StatusNotFound, fmt.Errorf("not found"))

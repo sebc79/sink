@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"time"
 	"unicode/utf8"
 )
 
 const (
 	maxFrame     = 1 << 20
+	queryBound   = 2 * time.Second
+	minPeerBytes = 10
 	viewMagic    = "aspv"
 	tagWaiting   = 0
 	tagCurrent   = 1
@@ -86,11 +89,21 @@ func (s Snapshot) Get(name string) (Peer, bool) {
 }
 
 func Query(socket string) (Snapshot, error) {
-	c, err := net.Dial("unix", socket)
+	return QueryDeadline(socket, queryBound)
+}
+
+func QueryDeadline(socket string, d time.Duration) (Snapshot, error) {
+	if d <= 0 {
+		d = queryBound
+	}
+	c, err := net.DialTimeout("unix", socket, d)
 	if err != nil {
 		return Snapshot{}, err
 	}
 	defer c.Close()
+	if err := c.SetDeadline(time.Now().Add(d)); err != nil {
+		return Snapshot{}, err
+	}
 	return Decode(c)
 }
 
@@ -129,6 +142,10 @@ func decodeView(body []byte) (Snapshot, error) {
 			return Snapshot{}, ErrBadFrame
 		}
 		count := int(binary.BigEndian.Uint32(rest[:4]))
+		remain := len(rest) - 4
+		if count < 0 || count > remain/minPeerBytes {
+			return Snapshot{}, ErrBadFrame
+		}
 		pos := 4
 		peers := make([]Peer, 0, count)
 		for i := 0; i < count; i++ {

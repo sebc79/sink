@@ -66,9 +66,9 @@ Listens on `:8080` and writes into `./storage`. Flags:
 -max-files 100000
 ```
 
-`-tree` is an optional ArborSync checkout, for example `/home/box/knowledge`. `/view` and `/browse` read that tree first. An exact path that is not in the tree is read from `-storage`. Upload and flush still write only to `-storage`.
+`-tree` is an optional ArborSync checkout, for example `/home/box/knowledge`. `/view` and `/api/file` resolve a path in this order: exact tree path, exact storage path, then a unique basename or trailing-segment match in the tree. `/`, `/browse`, `/api/tree`, and `/api/archive` stay on `-storage` during this dual-read phase. Upload and flush still write only to `-storage`.
 
-A `/view` or `/api/file` request waits up to `-hold-timeout` when the checkout file is missing, or when `?mtime=` is set and the checkout file is older than that Unix timestamp. `-peer-socket` is the ArborSync peer socket. While a request is held, sink watches `-sender-slave`. The response is 404 when the wait ends, the slave is disconnected or stuck, or the checkout is still older than `mtime`. `-index-rescan` is how often sink rebuilds the basename index of `-tree`.
+A `/view` or `/api/file` request waits up to `-hold-timeout` (clamped at 60s) when the checkout file is missing, or when `?mtime=` is set and the checkout file is older than that Unix timestamp. `-peer-socket` is the ArborSync peer socket. While a request is held, sink watches `-sender-slave`. A query error is not treated as a dead sender; the request waits out the hold. The response is 404 when the wait ends, the slave is disconnected or stuck, or the checkout is still older than `mtime`. Too many concurrent holds return 503. `-index-rescan` is how often sink rebuilds the basename index of `-tree`; missed views rate-limit extra rebuilds.
 
 Open http://localhost:8080/ to browse. Fetch http://localhost:8080/skill for the agent API contract (curl examples included).
 

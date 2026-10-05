@@ -36,11 +36,14 @@ func TestViewTreeBrowseAndResolve(t *testing.T) {
 	if res.StatusCode != 200 {
 		t.Fatalf("browse %d %s", res.StatusCode, body)
 	}
-	if !strings.Contains(body, ">knowledge<") {
+	if !strings.Contains(body, ">storage<") {
 		t.Fatalf("crumb: %s", body)
 	}
-	if !strings.Contains(body, "/browse/projects") {
-		t.Fatalf("tree listing: %s", body)
+	if strings.Contains(body, "/browse/projects") {
+		t.Fatalf("browse listed tree: %s", body)
+	}
+	if !strings.Contains(body, "/browse/only-storage") {
+		t.Fatalf("storage listing: %s", body)
 	}
 	if res.Header.Get("Referrer-Policy") != "same-origin" {
 		t.Fatalf("referrer %q", res.Header.Get("Referrer-Policy"))
@@ -303,6 +306,52 @@ func TestViewMtimeDoesNotServeStorage(t *testing.T) {
 	body := readAll(t, res)
 	if res.StatusCode != http.StatusNotFound || strings.Contains(body, "STORAGE-BYTES") {
 		t.Fatalf("status %d %s", res.StatusCode, body)
+	}
+}
+
+func TestViewStorageBeatsFuzzyTree(t *testing.T) {
+	tree := t.TempDir()
+	storage := t.TempDir()
+	writeRel(t, tree, "projects/x/keep.md", "tree-keep")
+	writeRel(t, storage, "keep.md", "storage-keep")
+	s := newTreeServer(t, tree, storage)
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+	res, err := http.Get(ts.URL + "/view/keep.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := readAll(t, res)
+	if res.StatusCode != 200 || !strings.Contains(body, "storage-keep") {
+		t.Fatalf("status %d %s", res.StatusCode, body)
+	}
+	if strings.Contains(body, "tree-keep") {
+		t.Fatalf("served fuzzy tree: %s", body)
+	}
+}
+
+func TestViewHoldBusy(t *testing.T) {
+	s := newTreeServer(t, t.TempDir(), t.TempDir())
+	for i := 0; i < maxConcurrentHolds; i++ {
+		s.holds <- struct{}{}
+	}
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+	res, err := http.Get(ts.URL + "/view/missing.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := readAll(t, res)
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("view status %d %s", res.StatusCode, body)
+	}
+	res, err = http.Get(ts.URL + "/api/file/missing.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readAll(t, res)
+	if res.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("api status %d %s", res.StatusCode, body)
 	}
 }
 

@@ -73,7 +73,7 @@ const (
 
 func classifySender(snap peers.Snapshot, id string, queryErr error) senderStatus {
 	if queryErr != nil {
-		return senderDead
+		return senderUnknown
 	}
 	if snap.Waiting() {
 		return senderWaiting
@@ -116,7 +116,12 @@ func holdFailError(suffix string, err error) error {
 }
 
 func (s *Server) await(ctx context.Context, suffix, referer string, want int64) (located, error) {
-	deadline := time.Now().Add(s.holdFor)
+	holdFor := s.holdFor
+	if holdFor <= 0 {
+		holdFor = time.Second
+	}
+	ctx, cancel := context.WithTimeout(ctx, holdFor)
+	defer cancel()
 	var last located
 	for {
 		loc, err := s.pollLocate(suffix, referer)
@@ -129,8 +134,7 @@ func (s *Server) await(ctx context.Context, suffix, referer string, want int64) 
 			return loc, nil
 		}
 		present, disk := holdPresence(loc, want)
-		timedOut := !time.Now().Before(deadline)
-		verdict := decideHold(present, disk, want, s.currentSender(), timedOut)
+		verdict := decideHold(present, disk, want, s.currentSender(), ctx.Err() != nil)
 		switch verdict.action {
 		case holdServe:
 			loc, err = s.locate(suffix, referer)
@@ -147,17 +151,30 @@ func (s *Server) await(ctx context.Context, suffix, referer string, want int64) 
 			return loc, verdict.err
 		}
 		wait := holdPoll
-		if remain := time.Until(deadline); remain < wait {
-			if remain < 0 {
-				remain = 0
+		if deadline, ok := ctx.Deadline(); ok {
+			if remain := time.Until(deadline); remain < wait {
+				if remain < 0 {
+					remain = 0
+				}
+				wait = remain
 			}
-			wait = remain
 		}
 		timer := time.NewTimer(wait)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return last, ctx.Err()
+			if errors.Is(ctx.Err(), context.Canceled) {
+				return last, ctx.Err()
+			}
+			present, disk := holdPresence(last, want)
+			v := decideHold(present, disk, want, s.currentSender(), true)
+			if last.suffix == "" {
+				last.suffix = suffix
+			}
+			if v.action == holdFail {
+				return last, v.err
+			}
+			return last, ErrHoldTimeout
 		case <-timer.C:
 		}
 	}
@@ -168,10 +185,30 @@ func (s *Server) pollLocate(suffix, referer string) (located, error) {
 	if err != nil || loc.kind != locateMiss || s.tree == "" {
 		return loc, err
 	}
-	if err := s.rebuildIndex(); err != nil && s.log != nil {
-		s.log.Info("index", "err", err)
-	}
+	s.maybeRebuildIndex()
 	return s.locate(suffix, referer)
+}
+
+func (s *Server) tryHold() bool {
+	if s.holds == nil {
+		return true
+	}
+	select {
+	case s.holds <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Server) releaseHold() {
+	if s.holds == nil {
+		return
+	}
+	select {
+	case <-s.holds:
+	default:
+	}
 }
 
 func holdPresence(loc located, want int64) (bool, int64) {
@@ -198,6 +235,14 @@ func (s *Server) currentSender() senderStatus {
 	if s.peerSocket == "" || s.queryPeers == nil {
 		return senderUnknown
 	}
+	s.peerMu.Lock()
+	defer s.peerMu.Unlock()
+	if !s.peerAt.IsZero() && time.Since(s.peerAt) < peerCacheTTL {
+		return classifySender(s.peerSnap, s.senderID, s.peerErr)
+	}
 	snap, err := s.queryPeers(s.peerSocket)
+	s.peerSnap = snap
+	s.peerErr = err
+	s.peerAt = time.Now()
 	return classifySender(snap, s.senderID, err)
 }
