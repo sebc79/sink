@@ -63,43 +63,6 @@ func TestResolveContainment(t *testing.T) {
 	}
 }
 
-func TestParseSize(t *testing.T) {
-	t.Parallel()
-	n, err := parseSize("512MB")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n != 512*1024*1024 {
-		t.Fatalf("got %d", n)
-	}
-	n, err = parseSize("1G")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n != 1024*1024*1024 {
-		t.Fatalf("got %d", n)
-	}
-}
-
-func TestParseUnpack(t *testing.T) {
-	t.Parallel()
-	f, u, err := parseUnpack("")
-	if err != nil || u || f != "" {
-		t.Fatalf("empty: %q %v %v", f, u, err)
-	}
-	f, u, err = parseUnpack("auto")
-	if err != nil || !u || f != "auto" {
-		t.Fatalf("auto: %q %v %v", f, u, err)
-	}
-	f, u, err = parseUnpack("tgz")
-	if err != nil || !u || f != "tar.gz" {
-		t.Fatalf("tgz: %q %v %v", f, u, err)
-	}
-	if _, _, err := parseUnpack("rar"); err == nil {
-		t.Fatal("expected error for rar")
-	}
-}
-
 func TestHumanSize(t *testing.T) {
 	t.Parallel()
 	if got := humanSize(500); got != "500 B" {

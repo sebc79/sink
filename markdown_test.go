@@ -170,17 +170,9 @@ func TestMarkdownViewHTML(t *testing.T) {
 	t.Cleanup(ts.Close)
 
 	body := "# Title\n\nSee $E=mc^2$ and:\n\n$$\n\\int_0^1 x dx\n$$\n"
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/upload?path=notes/doc.md", strings.NewReader(body))
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	res.Body.Close()
-	if res.StatusCode != 200 {
-		t.Fatalf("upload %d", res.StatusCode)
-	}
+	writeRel(t, s.root, "notes/doc.md", body)
 
-	res, err = http.Get(ts.URL + "/view/notes/doc.md")
+	res, err := http.Get(ts.URL + "/view/notes/doc.md")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,9 +220,7 @@ func TestNonMarkdownViewHasNoKatex(t *testing.T) {
 	s := testServer(t)
 	ts := httptest.NewServer(s.Handler())
 	t.Cleanup(ts.Close)
-	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/upload?path=a.txt", strings.NewReader("plain"))
-	res, _ := http.DefaultClient.Do(req)
-	res.Body.Close()
+	writeRel(t, s.root, "a.txt", "plain")
 	res, err := http.Get(ts.URL + "/view/a.txt")
 	if err != nil {
 		t.Fatal(err)

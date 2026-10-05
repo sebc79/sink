@@ -14,9 +14,6 @@ func newTreeServer(t *testing.T, tree, storage string) *Server {
 	s, err := New(Config{
 		StorageDir: storage,
 		TreeDir:    tree,
-		MaxUpload:  8 << 20,
-		MaxExtract: 8 << 20,
-		MaxFiles:   1000,
 		Logger:     slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {

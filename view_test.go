@@ -104,26 +104,6 @@ func TestViewTreeBrowseAndResolve(t *testing.T) {
 	if res.StatusCode != http.StatusFound || res.Header.Get("Location") != "/view/projects/beta/notes/keep.md" {
 		t.Fatalf("referer %d %q", res.StatusCode, res.Header.Get("Location"))
 	}
-
-	up, err := http.NewRequest(http.MethodPost, ts.URL+"/api/upload?path=up.txt", strings.NewReader("uploaded"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	res, err = http.DefaultClient.Do(up)
-	if err != nil {
-		t.Fatal(err)
-	}
-	res.Body.Close()
-	if res.StatusCode != 200 {
-		t.Fatalf("upload %d", res.StatusCode)
-	}
-	got, err := os.ReadFile(filepath.Join(storage, "up.txt"))
-	if err != nil || string(got) != "uploaded" {
-		t.Fatalf("storage upload %q %v", got, err)
-	}
-	if _, err := os.Stat(filepath.Join(tree, "up.txt")); !os.IsNotExist(err) {
-		t.Fatal("upload wrote into the tree")
-	}
 }
 
 func TestViewHoldFileAppears(t *testing.T) {

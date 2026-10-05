@@ -49,15 +49,6 @@
   .brand span { color: var(--accent); }
   .tag { color: var(--muted); font-size: .85rem; margin-left: .5rem; font-style: italic; }
   nav.links { display: flex; gap: 1rem; font-size: .92rem; align-items: center; }
-  form.flush { margin: 0; }
-  form.flush button {
-    background: transparent;
-    color: var(--accent);
-    border: 1px solid var(--accent);
-    padding: .22rem .7rem;
-    font: 600 13px/1.2 inherit;
-  }
-  form.flush button:hover { background: var(--accent); color: #fffaf2; filter: none; }
   .wrap {
     display: grid;
     grid-template-columns: 240px 1fr;
@@ -98,25 +89,6 @@
   .acts { display: flex; flex-wrap: wrap; gap: .45rem .7rem; align-items: center; font-size: .86rem; }
   .acts a { margin-right: 0; }
   .empty { padding: 1.4rem .9rem; color: var(--muted); }
-  details.upload {
-    margin: 0 0 1rem;
-    background: var(--paper);
-    border: 1px dashed var(--accent);
-    border-radius: 10px;
-    padding: .4rem .9rem .8rem;
-  }
-  details.upload summary { cursor: pointer; font-weight: 650; padding: .4rem 0; }
-  form.upload-form { display: grid; gap: .55rem; grid-template-columns: 1fr 1fr; }
-  label { display: flex; flex-direction: column; gap: .2rem; font-size: .82rem; color: var(--muted); }
-  input[type=text], select, input[type=file] {
-    font: 14px/1.3 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    padding: .4rem .5rem;
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    background: #fff;
-    color: var(--ink);
-  }
-  .full { grid-column: 1 / -1; }
   button {
     justify-self: start;
     background: var(--accent);
@@ -130,7 +102,6 @@
   button:hover { filter: brightness(1.05); }
   .banner { padding: .6rem .8rem; border-radius: 8px; margin: 0 0 1rem; }
   .err { background: #f8e4da; color: #7a2a12; }
-  .ok { background: #e3efe8; color: #21584a; }
   .filehead { display: flex; justify-content: space-between; gap: .75rem 1rem; align-items: baseline; margin-bottom: .8rem; flex-wrap: wrap; }
   .filehead h1 { font-size: 1.15rem; margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; min-width: 0; overflow-wrap: anywhere; }
   pre.view, pre.hex {
@@ -287,7 +258,6 @@
     .wrap { grid-template-columns: 1fr; }
     .wrap.md-wide { max-width: none; }
     aside { display: none; }
-    form.upload-form { grid-template-columns: 1fr; }
     main { padding: 1rem; }
     .md-preview { padding: 1rem clamp(1rem, 4vw, 3rem) 2rem; }
   }
@@ -318,10 +288,6 @@
   </div>
   <nav class="links">
     <a href="/">Browse</a>
-    <a href="/skill">Agent skill</a>
-    <form class="flush" action="/flush" method="post">
-      <button type="submit" title="Empty storage/">Flush</button>
-    </form>
   </nav>
 </header>
 <div class="wrap{{if and .File .File.IsMarkdown}} md-wide{{end}}">
@@ -346,32 +312,6 @@
     </nav>
 
     {{if .Error}}<div class="banner err">{{.Error}}</div>{{end}}
-    {{if .Notice}}<div class="banner ok">{{.Notice}}</div>{{end}}
-
-    <details class="upload" {{if .UploadOpen}}open{{end}}>
-      <summary>Upload into storage</summary>
-      <form class="upload-form" action="/upload" method="post" enctype="multipart/form-data">
-        <label class="full">Relative path
-          <input type="text" name="path" id="path" required placeholder="docs/notes.txt or vendor/lib" value="{{.UploadPrefill}}">
-        </label>
-        <label>Unpack archive
-          <select name="unpack" id="unpack">
-            <option value="none">none (store as a file)</option>
-            <option value="auto">auto-detect zip/tar</option>
-            <option value="zip">zip</option>
-            <option value="tar">tar</option>
-            <option value="tar.gz">tar.gz</option>
-            <option value="tar.bz2">tar.bz2</option>
-            <option value="tar.xz">tar.xz</option>
-          </select>
-        </label>
-        <label>File
-          <input type="file" name="file" id="file" required>
-        </label>
-        <button class="full" type="submit">Upload</button>
-      </form>
-      <p class="hint">Path is relative to <code>storage/</code>. Enable unpack to extract a zip or tar (optionally compressed) as a subtree rooted at that path.</p>
-    </details>
 
     {{if .IsFile}}
       <div class="filehead">
@@ -463,36 +403,12 @@
           </tbody>
         </table>
         {{else}}
-          <p class="empty">This directory is empty. Upload a file or unpack an archive to fill it.</p>
+          <p class="empty">This directory is empty.</p>
         {{end}}
       </div>
     {{end}}
   </main>
 </div>
-<script>
-  const file = document.getElementById("file");
-  const path = document.getElementById("path");
-  const unpack = document.getElementById("unpack");
-  if (file && path) {
-    file.addEventListener("change", () => {
-      if (!file.files.length) return;
-      const name = file.files[0].name;
-      if (!path.value || path.value.endsWith("/")) {
-        path.value = (path.value || "") + name;
-      }
-    });
-  }
-  if (unpack && path) {
-    unpack.addEventListener("change", () => {
-      if (unpack.value !== "none" && path.value && !path.value.endsWith("/")) {
-        const slash = path.value.lastIndexOf("/");
-        if (slash >= 0 && path.value.slice(slash + 1).includes(".")) {
-          path.value = path.value.slice(0, slash + 1);
-        }
-      }
-    });
-  }
-</script>
 {{if .IsFile}}
 <script>
   (() => {

@@ -17,7 +17,7 @@ import (
 	"unicode/utf8"
 )
 
-//go:embed templates/*.html skill.md
+//go:embed templates/*.html
 var embedded embed.FS
 
 type pageTemplates struct {
@@ -83,10 +83,7 @@ type pageData struct {
 	Entries        []Entry
 	Tree           []treeNode
 	File           *fileView
-	UploadPrefill  string
-	UploadOpen     bool
 	Error          string
-	Notice         string
 	Parent         string
 	IsAmbiguous    bool
 	Matches        []string
@@ -96,10 +93,10 @@ type pageData struct {
 }
 
 func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
-	s.renderBrowse(w, r, s.requestPath(r), r.URL.Query().Get("err"), r.URL.Query().Get("ok"))
+	s.renderBrowse(w, r, s.requestPath(r), r.URL.Query().Get("err"))
 }
 
-func (s *Server) renderBrowse(w http.ResponseWriter, r *http.Request, rel, errMsg, okMsg string) {
+func (s *Server) renderBrowse(w http.ResponseWriter, r *http.Request, rel, errMsg string) {
 	abs, clean, err := s.resolve(rel)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -128,29 +125,15 @@ func (s *Server) renderBrowse(w http.ResponseWriter, r *http.Request, rel, errMs
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	prefill := ""
-	if clean != "" {
-		prefill = clean + "/"
-	}
-	notice := ""
-	switch okMsg {
-	case "uploaded":
-		notice = "Upload stored."
-	case "flushed":
-		notice = "Storage emptied."
-	}
 	data := pageData{
-		Title:         s.browseTitle(clean),
-		RelPath:       clean,
-		IsRoot:        clean == "",
-		Breadcrumb:    s.breadcrumbs(clean),
-		Entries:       entries,
-		Tree:          s.buildTree(clean),
-		UploadPrefill: prefill,
-		UploadOpen:    errMsg != "",
-		Error:         errMsg,
-		Notice:        notice,
-		Parent:        parentRel(clean),
+		Title:      s.browseTitle(clean),
+		RelPath:    clean,
+		IsRoot:     clean == "",
+		Breadcrumb: s.breadcrumbs(clean),
+		Entries:    entries,
+		Tree:       s.buildTree(clean),
+		Error:      errMsg,
+		Parent:     parentRel(clean),
 	}
 	s.renderPage(w, data)
 }
@@ -248,12 +231,8 @@ func (s *Server) renderLocatedFile(w http.ResponseWriter, r *http.Request, loc l
 		IsFile:        true,
 		Breadcrumb:    s.breadcrumbs(loc.rel),
 		Tree:          s.buildTree(parentRel(loc.rel)),
-		File:          fv,
-		UploadPrefill: parentRel(loc.rel),
-		Parent:        parentRel(loc.rel),
-	}
-	if data.UploadPrefill != "" {
-		data.UploadPrefill += "/"
+		File:   fv,
+		Parent: parentRel(loc.rel),
 	}
 	s.renderPage(w, data)
 }
