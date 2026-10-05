@@ -270,3 +270,154 @@ func TestRenderMarkdownTreePaths(t *testing.T) {
 		t.Fatalf("left the image path absolute: %s", s)
 	}
 }
+
+func TestRelFileMention(t *testing.T) {
+	ok := []string{
+		"2026-09-08-derender-market-research.md",
+		"originals/2026-09-08-derender-market-verdict.md",
+		"INDEX.md",
+		"notes.markdown",
+		"readme.TXT",
+		"projects/alpha/notes/keep.md",
+	}
+	for _, raw := range ok {
+		if got := relFileMention(raw); got != raw {
+			t.Fatalf("relFileMention(%q)=%q", raw, got)
+		}
+	}
+	skip := []string{
+		"",
+		"code",
+		"ls -la",
+		"https://example.com/a.md",
+		"/abs/file.md",
+		"../escape.md",
+		"a/../b.md",
+		"git status",
+		"foo.bar",
+		"INDEX.md ",
+		".md",
+	}
+	for _, raw := range skip {
+		if got := relFileMention(raw); got != "" {
+			t.Fatalf("relFileMention(%q)=%q, want empty", raw, got)
+		}
+	}
+}
+
+func TestRenderMarkdownRelFiles(t *testing.T) {
+	src := "sources: `2026-09-08-derender-market-research.md` and " +
+		"`originals/2026-09-08-derender-market-verdict.md` and " +
+		"`missing.md` and `../escape.md` and `INDEX.md` and `ls -la`.\n"
+	exists := map[string]bool{
+		"projects/cv/notes/2026-09-08-derender-market-research.md":          true,
+		"projects/cv/notes/originals/2026-09-08-derender-market-verdict.md": true,
+		"INDEX.md": true,
+	}
+	html, err := renderViewMarkdown([]byte(src), "projects/cv/notes/2026-09-18-florence-journal-hebdo-fr.md", func(rel string) bool {
+		return exists[rel]
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(html)
+	sib := `/view/projects/cv/notes/2026-09-08-derender-market-research.md`
+	sub := `/view/projects/cv/notes/originals/2026-09-08-derender-market-verdict.md`
+	if !strings.Contains(s, `<a href="`+sib+`"><code>2026-09-08-derender-market-research.md</code></a>`) {
+		t.Fatalf("sibling link: %s", s)
+	}
+	if !strings.Contains(s, `<a href="`+sub+`"><code>originals/2026-09-08-derender-market-verdict.md</code></a>`) {
+		t.Fatalf("subdir link: %s", s)
+	}
+	if strings.Contains(s, `/view/projects/cv/notes/missing.md`) {
+		t.Fatalf("linked a missing file: %s", s)
+	}
+	if strings.Contains(s, `../escape.md</code></a>`) || strings.Contains(s, `/view/projects/cv/escape.md`) {
+		t.Fatalf("linked a parent escape: %s", s)
+	}
+	if strings.Contains(s, `/view/INDEX.md`) {
+		t.Fatalf("linked a tree-root INDEX.md: %s", s)
+	}
+	if strings.Contains(s, `<code>ls -la</code></a>`) {
+		t.Fatalf("linked a shell command: %s", s)
+	}
+	if !strings.Contains(s, `<code>missing.md</code>`) || !strings.Contains(s, `<code>INDEX.md</code>`) {
+		t.Fatalf("missing spans should stay code: %s", s)
+	}
+}
+
+func TestRenderMarkdownRelFileKeepsTreeAbsoluteBacktick(t *testing.T) {
+	src := "Open `projects/alpha/extra/keep.md` now.\n"
+	html, err := renderViewMarkdown([]byte(src), "projects/cv/notes/journal.md", func(string) bool {
+		return true
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(html)
+	if !strings.Contains(s, `/view/projects/alpha/extra/keep.md`) {
+		t.Fatalf("tree-absolute backtick: %s", s)
+	}
+	if strings.Contains(s, `/view/projects/cv/notes/projects/`) {
+		t.Fatalf("joined a tree-absolute path onto the viewed directory: %s", s)
+	}
+}
+
+func TestMarkdownViewRelFileLinks(t *testing.T) {
+	s := testServer(t)
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+
+	body := "sources: `2026-09-08-derender-market-research.md` and " +
+		"`originals/2026-09-08-derender-market-verdict.md` and " +
+		"`missing.md` and `../escape.md` and `INDEX.md`.\n"
+	writeRel(t, s.tree, "projects/cv/notes/2026-09-18-florence-journal-hebdo-fr.md", body)
+	writeRel(t, s.tree, "projects/cv/notes/2026-09-08-derender-market-research.md", "sib")
+	writeRel(t, s.tree, "projects/cv/notes/originals/2026-09-08-derender-market-verdict.md", "sub")
+	writeRel(t, s.tree, "INDEX.md", "root-index")
+
+	res, err := http.Get(ts.URL + "/view/projects/cv/notes/2026-09-18-florence-journal-hebdo-fr.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	b, _ := io.ReadAll(res.Body)
+	html := string(b)
+	if res.StatusCode != 200 {
+		t.Fatalf("status %d %s", res.StatusCode, html)
+	}
+	if !strings.Contains(html, `/view/projects/cv/notes/2026-09-08-derender-market-research.md`) {
+		t.Fatalf("sibling: %s", html)
+	}
+	if !strings.Contains(html, `/view/projects/cv/notes/originals/2026-09-08-derender-market-verdict.md`) {
+		t.Fatalf("subdir: %s", html)
+	}
+	if strings.Contains(html, `/view/projects/cv/notes/missing.md`) {
+		t.Fatalf("missing file linked: %s", html)
+	}
+	if strings.Contains(html, `/view/projects/cv/escape.md`) {
+		t.Fatalf("parent escape linked: %s", html)
+	}
+	if strings.Contains(html, `href="/view/INDEX.md"`) {
+		t.Fatalf("global INDEX.md linked: %s", html)
+	}
+
+	res, err = http.Get(ts.URL + "/view/projects/cv/notes/2026-09-18-florence-journal-hebdo-fr.md?mode=raw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	b, _ = io.ReadAll(res.Body)
+	html = string(b)
+	if !strings.Contains(html, `id="md-preview" hidden`) {
+		t.Fatalf("raw mode should hide preview: %s", html)
+	}
+	rawStart := strings.Index(html, `id="md-raw"`)
+	if rawStart < 0 {
+		t.Fatalf("missing raw pane: %s", html)
+	}
+	raw := html[rawStart:]
+	if !strings.Contains(raw, "`2026-09-08-derender-market-research.md`") {
+		t.Fatalf("raw pane lost backticks: %s", raw)
+	}
+}

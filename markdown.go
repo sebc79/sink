@@ -25,6 +25,15 @@ func isMarkdownName(name string) bool {
 }
 
 func renderMarkdown(src []byte, relPath string) (template.HTML, error) {
+	return renderViewMarkdown(src, relPath, nil)
+}
+
+func (s *Server) treeFileExists(rel string) bool {
+	_, _, kind, err := s.statIn(s.tree, rel)
+	return err == nil && kind == statFile
+}
+
+func renderViewMarkdown(src []byte, relPath string, exists func(string) bool) (template.HTML, error) {
 	src = linkifyTreeMentions(src)
 	dir := parentRel(relPath)
 	md := goldmark.New(
@@ -37,6 +46,7 @@ func renderMarkdown(src []byte, relPath string) (template.HTML, error) {
 			parser.WithAutoHeadingID(),
 			parser.WithASTTransformers(
 				util.Prioritized(mdURLTransformer{dir: dir}, 100),
+				util.Prioritized(mdRelFileTransformer{viewed: relPath, exists: exists}, 110),
 			),
 		),
 	)
@@ -49,6 +59,125 @@ func renderMarkdown(src []byte, relPath string) (template.HTML, error) {
 
 type mdURLTransformer struct {
 	dir string
+}
+
+type mdRelFileTransformer struct {
+	viewed string
+	exists func(string) bool
+}
+
+func (t mdRelFileTransformer) Transform(doc *ast.Document, reader text.Reader, _ parser.Context) {
+	if t.exists == nil {
+		return
+	}
+	source := reader.Source()
+	var codes []*ast.CodeSpan
+	_ = ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
+		if entering {
+			if code, ok := n.(*ast.CodeSpan); ok {
+				codes = append(codes, code)
+			}
+		}
+		return ast.WalkContinue, nil
+	})
+	for _, code := range codes {
+		linkRelFileCode(code, t.viewed, source, t.exists)
+	}
+}
+
+func linkRelFileCode(code *ast.CodeSpan, viewed string, source []byte, exists func(string) bool) {
+	for p := code.Parent(); p != nil; p = p.Parent() {
+		if p.Kind() == ast.KindLink {
+			return
+		}
+	}
+	mention := relFileMention(codeSpanText(code, source))
+	if mention == "" {
+		return
+	}
+	joined, ok := joinViewRel(viewed, mention)
+	if !ok || !exists(joined) {
+		return
+	}
+	parent := code.Parent()
+	if parent == nil {
+		return
+	}
+	link := ast.NewLink()
+	link.Destination = []byte("/view/" + urlPath(joined))
+	parent.ReplaceChild(parent, code, link)
+	link.AppendChild(link, code)
+}
+
+func codeSpanText(n *ast.CodeSpan, source []byte) string {
+	var b strings.Builder
+	for c := n.FirstChild(); c != nil; c = c.NextSibling() {
+		if t, ok := c.(*ast.Text); ok {
+			b.Write(t.Segment.Value(source))
+		}
+	}
+	return b.String()
+}
+
+func relFileMention(raw string) string {
+	if raw == "" || strings.TrimSpace(raw) != raw {
+		return ""
+	}
+	if strings.ContainsAny(raw, " \t\n\r|;$&<>(){}[]'\"`!*?=\\") {
+		return ""
+	}
+	if strings.Contains(raw, "://") || strings.HasPrefix(raw, "//") || strings.HasPrefix(raw, "/") {
+		return ""
+	}
+	if strings.Contains(raw, "..") {
+		return ""
+	}
+	if hasIgnoredSegment(raw) {
+		return ""
+	}
+	for _, seg := range strings.Split(raw, "/") {
+		if seg == "" || seg == "." || !pathSegmentOK(seg) {
+			return ""
+		}
+	}
+	base := raw
+	if i := strings.LastIndex(raw, "/"); i >= 0 {
+		base = raw[i+1:]
+	}
+	if !noteFileName(base) {
+		return ""
+	}
+	return raw
+}
+
+func pathSegmentOK(seg string) bool {
+	for i := 0; i < len(seg); i++ {
+		if !isPathChar(seg[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func noteFileName(name string) bool {
+	ext := filepath.Ext(name)
+	if ext == "" || ext == name {
+		return false
+	}
+	return isMarkdownName(name) || strings.EqualFold(ext, ".txt")
+}
+
+func joinViewRel(viewedRel, mention string) (string, bool) {
+	dir := parentRel(viewedRel)
+	joined := mention
+	if dir != "" {
+		joined = path.Join(dir, mention)
+	}
+	clean, err := cleanRel(joined)
+	if err != nil || clean == "" || hasIgnoredSegment(clean) {
+		return "", false
+	}
+	return clean, true
 }
 
 func (t mdURLTransformer) Transform(doc *ast.Document, _ text.Reader, _ parser.Context) {

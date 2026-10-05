@@ -317,7 +317,7 @@ func (s *Server) readFileView(abs, clean string, st os.FileInfo) (*fileView, err
 		fv.Content = string(body)
 		if isMarkdownName(clean) {
 			fv.IsMarkdown = true
-			html, err := renderMarkdown(body, clean)
+			html, err := renderViewMarkdown(body, clean, s.treeFileExists)
 			if err != nil {
 				return nil, err
 			}
