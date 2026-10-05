@@ -228,6 +228,41 @@ func TestViewHoldDeadSenderRefusesStale(t *testing.T) {
 	}
 }
 
+func TestViewServesFreshMtime(t *testing.T) {
+	tree := t.TempDir()
+	storage := t.TempDir()
+	writeRel(t, tree, "projects/fresh.md", "fresh-bytes")
+	path := filepath.Join(tree, "projects", "fresh.md")
+	when := time.Unix(1_700_000_100, 0)
+	if err := os.Chtimes(path, when, when); err != nil {
+		t.Fatal(err)
+	}
+	s := newTreeServer(t, tree, storage)
+	s.holdFor = 5 * time.Second
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+	client := &http.Client{Timeout: 2 * time.Second}
+	q := strconv.FormatInt(when.Unix(), 10)
+
+	res, err := client.Get(ts.URL + "/view/projects/fresh.md?mtime=" + q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := readAll(t, res)
+	if res.StatusCode != 200 || !strings.Contains(body, "fresh-bytes") {
+		t.Fatalf("view %d %s", res.StatusCode, body)
+	}
+
+	res, err = client.Get(ts.URL + "/api/file/projects/fresh.md?mtime=" + q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = readAll(t, res)
+	if res.StatusCode != 200 || body != "fresh-bytes" {
+		t.Fatalf("file %d %q", res.StatusCode, body)
+	}
+}
+
 func TestViewInvalidMtime(t *testing.T) {
 	s := newTreeServer(t, t.TempDir(), t.TempDir())
 	ts := httptest.NewServer(s.Handler())
