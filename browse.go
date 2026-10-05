@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"embed"
 	"encoding/hex"
+	"errors"
 	"html/template"
 	"io"
 	"net/http"
@@ -73,19 +75,24 @@ type fileView struct {
 }
 
 type pageData struct {
-	Title         string
-	RelPath       string
-	IsRoot        bool
-	IsFile        bool
-	Breadcrumb    []crumb
-	Entries       []Entry
-	Tree          []treeNode
-	File          *fileView
-	UploadPrefill string
-	UploadOpen    bool
-	Error         string
-	Notice        string
-	Parent        string
+	Title          string
+	RelPath        string
+	IsRoot         bool
+	IsFile         bool
+	Breadcrumb     []crumb
+	Entries        []Entry
+	Tree           []treeNode
+	File           *fileView
+	UploadPrefill  string
+	UploadOpen     bool
+	Error          string
+	Notice         string
+	Parent         string
+	IsAmbiguous    bool
+	Matches        []string
+	MatchTruncated bool
+	Missing        bool
+	RawQuery       string
 }
 
 func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
@@ -93,28 +100,30 @@ func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) renderBrowse(w http.ResponseWriter, r *http.Request, rel, errMsg, okMsg string) {
-	abs, clean, err := s.resolve(rel)
+	loc, err := s.locate(rel, r.Referer())
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		s.writeReadErr(w, r, err)
 		return
 	}
-	st, err := os.Lstat(abs)
-	if err != nil {
-		if os.IsNotExist(err) {
-			http.Error(w, "not found", http.StatusNotFound)
-			return
-		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	switch loc.kind {
+	case locateInvalid:
+		http.Error(w, ErrPathInvalid.Error(), http.StatusBadRequest)
+		return
+	case locateAmbiguous:
+		s.renderAmbiguous(w, r, loc)
+		return
+	case locateMiss:
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	case locateHit:
+		http.Redirect(w, r, "/view/"+urlPath(loc.rel), http.StatusSeeOther)
+		return
+	case locateDir:
+	default:
+		http.Error(w, "not found", http.StatusNotFound)
 		return
 	}
-	if st.Mode()&os.ModeSymlink != 0 {
-		http.Error(w, "symlinks are not served", http.StatusForbidden)
-		return
-	}
-	if !st.IsDir() {
-		http.Redirect(w, r, "/view/"+urlPath(clean), http.StatusSeeOther)
-		return
-	}
+	abs, clean := loc.abs, loc.rel
 
 	entries, _, err := s.listEntries(abs, clean, false)
 	if err != nil {
@@ -133,10 +142,10 @@ func (s *Server) renderBrowse(w http.ResponseWriter, r *http.Request, rel, errMs
 		notice = "Storage emptied."
 	}
 	data := pageData{
-		Title:         browseTitle(clean),
+		Title:         s.browseTitle(clean),
 		RelPath:       clean,
 		IsRoot:        clean == "",
-		Breadcrumb:    breadcrumbs(clean),
+		Breadcrumb:    s.breadcrumbs(clean),
 		Entries:       entries,
 		Tree:          s.buildTree(clean),
 		UploadPrefill: prefill,
@@ -149,34 +158,78 @@ func (s *Server) renderBrowse(w http.ResponseWriter, r *http.Request, rel, errMs
 }
 
 func (s *Server) handleView(w http.ResponseWriter, r *http.Request) {
-	abs, clean, err := s.resolve(s.requestPath(r))
+	suffix := s.requestPath(r)
+	want, err := parseMtimeQuery(r.URL.Query().Get("mtime"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if clean == "" {
-		http.Redirect(w, r, "/", http.StatusSeeOther)
+	loc, err := s.locate(suffix, r.Referer())
+	if err != nil {
+		s.writeReadErr(w, r, err)
 		return
 	}
-	st, err := os.Lstat(abs)
+	if s.writeReadStop(w, r, loc, true) {
+		return
+	}
+	if loc.kind == locateHit && loc.rel != loc.suffix {
+		http.Redirect(w, r, withQuery("/view/"+urlPath(loc.rel), r.URL.RawQuery), http.StatusFound)
+		return
+	}
+	if !readyLocated(loc, want) {
+		loc, err = s.await(r.Context(), suffix, r.Referer(), want)
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return
+			}
+			s.renderMissing(w, loc, err)
+			return
+		}
+		if s.writeReadStop(w, r, loc, true) {
+			return
+		}
+		if loc.kind == locateHit && loc.rel != loc.suffix {
+			http.Redirect(w, r, withQuery("/view/"+urlPath(loc.rel), r.URL.RawQuery), http.StatusFound)
+			return
+		}
+	}
+	if loc.kind != locateHit {
+		s.renderMissing(w, loc, ErrMissingAfterHold)
+		return
+	}
+	s.renderLocatedFile(w, r, loc)
+}
+
+func withQuery(path, rawQuery string) string {
+	if rawQuery == "" {
+		return path
+	}
+	return path + "?" + rawQuery
+}
+
+func (s *Server) renderLocatedFile(w http.ResponseWriter, r *http.Request, loc located) {
+	st, err := os.Lstat(loc.abs)
 	if err != nil {
 		if os.IsNotExist(err) {
-			http.Error(w, "not found", http.StatusNotFound)
+			s.renderMissing(w, loc, ErrMissingAfterHold)
 			return
 		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	if st.Mode()&os.ModeSymlink != 0 {
-		http.Error(w, "symlinks are not served", http.StatusForbidden)
+		http.Error(w, errSymlink.Error(), http.StatusForbidden)
 		return
 	}
 	if st.IsDir() {
-		http.Redirect(w, r, "/browse/"+urlPath(clean), http.StatusSeeOther)
+		dest := "/"
+		if loc.rel != "" {
+			dest = "/browse/" + urlPath(loc.rel)
+		}
+		http.Redirect(w, r, dest, http.StatusSeeOther)
 		return
 	}
-
-	fv, err := s.readFileView(abs, clean, st)
+	fv, err := s.readFileView(loc.abs, loc.rel, st)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -188,13 +241,13 @@ func (s *Server) handleView(w http.ResponseWriter, r *http.Request) {
 	}
 	data := pageData{
 		Title:         fv.Name,
-		RelPath:       clean,
+		RelPath:       loc.rel,
 		IsFile:        true,
-		Breadcrumb:    breadcrumbs(clean),
-		Tree:          s.buildTree(parentRel(clean)),
+		Breadcrumb:    s.breadcrumbs(loc.rel),
+		Tree:          s.buildTree(parentRel(loc.rel)),
 		File:          fv,
-		UploadPrefill: parentRel(clean),
-		Parent:        parentRel(clean),
+		UploadPrefill: parentRel(loc.rel),
+		Parent:        parentRel(loc.rel),
 	}
 	if data.UploadPrefill != "" {
 		data.UploadPrefill += "/"
@@ -202,7 +255,38 @@ func (s *Server) handleView(w http.ResponseWriter, r *http.Request) {
 	s.renderPage(w, data)
 }
 
+func (s *Server) renderAmbiguous(w http.ResponseWriter, r *http.Request, loc located) {
+	data := pageData{
+		Title:          "Matches",
+		RelPath:        loc.suffix,
+		IsAmbiguous:    true,
+		Matches:        loc.matches,
+		MatchTruncated: loc.truncated,
+		RawQuery:       r.URL.RawQuery,
+		Breadcrumb:     s.breadcrumbs(""),
+		Tree:           s.buildTree(""),
+	}
+	s.renderPage(w, data)
+}
+
+func (s *Server) renderMissing(w http.ResponseWriter, loc located, err error) {
+	suffix := loc.suffix
+	data := pageData{
+		Title:      "Not found",
+		RelPath:    suffix,
+		Missing:    true,
+		Error:      holdFailError(suffix, err).Error(),
+		Breadcrumb: s.breadcrumbs(parentRel(suffix)),
+		Tree:       s.buildTree(parentRel(suffix)),
+	}
+	s.renderPageCode(w, http.StatusNotFound, data)
+}
+
 func (s *Server) renderPage(w http.ResponseWriter, data pageData) {
+	s.renderPageCode(w, http.StatusOK, data)
+}
+
+func (s *Server) renderPageCode(w http.ResponseWriter, code int, data pageData) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	csp := "default-src 'self'; img-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; frame-ancestors 'none'"
@@ -215,6 +299,7 @@ func (s *Server) renderPage(w http.ResponseWriter, data pageData) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	w.WriteHeader(code)
 	_, _ = w.Write(buf.Bytes())
 }
 
@@ -293,8 +378,20 @@ func isTextContent(ct string, body []byte) bool {
 	return strings.HasPrefix(http.DetectContentType(body), "text/")
 }
 
-func breadcrumbs(rel string) []crumb {
-	out := []crumb{{Name: "storage", Path: ""}}
+func treeCrumbName(tree string) string {
+	base := filepath.Base(tree)
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		return "tree"
+	}
+	return base
+}
+
+func (s *Server) breadcrumbs(rel string) []crumb {
+	name := "storage"
+	if s.tree != "" {
+		name = treeCrumbName(s.tree)
+	}
+	out := []crumb{{Name: name, Path: ""}}
 	if rel == "" {
 		return out
 	}
@@ -311,15 +408,28 @@ func breadcrumbs(rel string) []crumb {
 	return out
 }
 
-func browseTitle(rel string) string {
+func (s *Server) browseTitle(rel string) string {
 	if rel == "" {
-		return "storage"
+		return s.breadcrumbs("")[0].Name
 	}
 	return rel
 }
 
 func (s *Server) buildTree(current string) []treeNode {
 	const maxNodes = 1500
+	root := s.root
+	treeList := false
+	if s.tree != "" {
+		root = s.tree
+		treeList = true
+	}
+	var rootDev uint64
+	var haveDev bool
+	if treeList {
+		if ri, err := os.Lstat(root); err == nil {
+			rootDev, haveDev = devOf(ri)
+		}
+	}
 	var nodes int
 	var walk func(abs, rel string) []treeNode
 	walk = func(abs, rel string) []treeNode {
@@ -335,6 +445,14 @@ func (s *Server) buildTree(current string) []treeNode {
 			st, err := d.Info()
 			if err != nil || st.Mode()&os.ModeSymlink != 0 || !d.IsDir() {
 				continue
+			}
+			if treeList && ignoredName(d.Name()) {
+				continue
+			}
+			if treeList && haveDev {
+				if dev, ok := devOf(st); ok && dev != rootDev {
+					continue
+				}
 			}
 			child := d.Name()
 			if rel != "" {
@@ -355,7 +473,7 @@ func (s *Server) buildTree(current string) []treeNode {
 		}
 		return dirs
 	}
-	return walk(s.root, "")
+	return walk(root, "")
 }
 
 func humanSize(n int64) string {

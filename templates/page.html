@@ -143,6 +143,8 @@
   }
   .preview { max-width: 100%; border-radius: 8px; border: 1px solid var(--line); background: #fff; }
   .hint { color: var(--muted); font-size: .88rem; }
+  ul.matches { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; padding-left: 1.2rem; }
+  ul.matches li { margin: .35rem 0; }
   .toolbar { display: flex; gap: .8rem; flex-wrap: wrap; margin: 0 0 1rem; font-size: .9rem; }
   .switch {
     display: inline-flex;
@@ -306,6 +308,16 @@
         <p class="hint">Binary file ({{.File.ContentType}}). Hex preview of the first bytes:</p>
         <pre class="hex">{{.File.HexPreview}}</pre>
       {{end}}
+    {{else if .IsAmbiguous}}
+      <h1>Several files match <code>{{.RelPath}}</code></h1>
+      <ul class="matches">
+        {{range .Matches}}
+          <li><a href="/view/{{urlPath .}}{{if $.RawQuery}}?{{$.RawQuery}}{{end}}">{{.}}</a></li>
+        {{end}}
+      </ul>
+      {{if .MatchTruncated}}<p class="hint">Showing {{len .Matches}} matches. More files match this name.</p>{{end}}
+    {{else if .Missing}}
+      <p class="empty">No file for <code>{{.RelPath}}</code>.</p>
     {{else}}
       <div class="toolbar">
         {{if not .IsRoot}}<a href="{{if .Parent}}/browse/{{urlPath .Parent}}{{else}}/{{end}}">↑ Parent</a>{{end}}
