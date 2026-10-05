@@ -428,6 +428,7 @@ func walkPack(srcAbs, rel string, fn packFn) error {
 		prefix = path.Base(rel)
 	}
 
+	rootDev, rootDevOK := devOf(info)
 	return filepath.WalkDir(srcAbs, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -436,11 +437,16 @@ func walkPack(srcAbs, rel string, fn packFn) error {
 		if err != nil {
 			return err
 		}
-		if st.Mode()&os.ModeSymlink != 0 {
+		if st.Mode()&os.ModeSymlink != 0 || ignoredName(d.Name()) {
 			if d.IsDir() {
 				return fs.SkipDir
 			}
 			return nil
+		}
+		if d.IsDir() && p != srcAbs && rootDevOK {
+			if dev, ok := devOf(st); ok && dev != rootDev {
+				return fs.SkipDir
+			}
 		}
 		relPath, err := filepath.Rel(srcAbs, p)
 		if err != nil {

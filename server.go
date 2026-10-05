@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,19 +14,47 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
+
+	"sink/peers"
 )
 
 const (
-	defaultMaxUpload  int64 = 512 << 20
-	defaultMaxExtract int64 = 1 << 30
-	defaultMaxFiles         = 100_000
-	maxTreeEntries          = 10_000
-	maxViewBytes            = 1 << 20
+	defaultMaxUpload   int64 = 512 << 20
+	defaultMaxExtract  int64 = 1 << 30
+	defaultMaxFiles          = 100_000
+	maxTreeEntries           = 10_000
+	maxViewBytes             = 1 << 20
+	maxHoldTimeout           = 60 * time.Second
+	maxConcurrentHolds       = 32
+	indexRebuildMin          = 2 * time.Second
+	peerCacheTTL             = 250 * time.Millisecond
+	peerQueryBound           = 2 * time.Second
 )
+
+var errHoldBusy = errors.New("too many held views")
 
 type Server struct {
 	root       string
+	tree       string
+	peerSocket string
+	senderID   string
+	holdFor    time.Duration
+	indexEvery time.Duration
+	index      *treeIndex
+	queryPeers func(string) (peers.Snapshot, error)
+	stopIndex  func()
+	holds      chan struct{}
+	indexMu    sync.Mutex
+	indexBusy  bool
+	lastIndex  time.Time
+	rebuilds   atomic.Int64
+	peerMu     sync.Mutex
+	peerSnap   peers.Snapshot
+	peerErr    error
+	peerAt     time.Time
 	maxUpload  int64
 	maxExtract int64
 	maxFiles   int
@@ -35,11 +64,17 @@ type Server struct {
 }
 
 type Config struct {
-	StorageDir string
-	MaxUpload  int64
-	MaxExtract int64
-	MaxFiles   int
-	Logger     *slog.Logger
+	StorageDir  string
+	TreeDir     string
+	PeerSocket  string
+	SenderID    string
+	HoldTimeout time.Duration
+	IndexRescan time.Duration
+	QueryPeers  func(string) (peers.Snapshot, error)
+	MaxUpload   int64
+	MaxExtract  int64
+	MaxFiles    int
+	Logger      *slog.Logger
 }
 
 func New(cfg Config) (*Server, error) {
@@ -58,6 +93,27 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
+	if cfg.SenderID == "" {
+		cfg.SenderID = "grok-bot-box"
+	}
+	if cfg.HoldTimeout <= 0 {
+		cfg.HoldTimeout = 30 * time.Second
+	}
+	if cfg.HoldTimeout > maxHoldTimeout {
+		cfg.HoldTimeout = maxHoldTimeout
+	}
+	if cfg.IndexRescan <= 0 {
+		cfg.IndexRescan = 45 * time.Second
+	}
+	if cfg.QueryPeers == nil {
+		cfg.QueryPeers = func(socket string) (peers.Snapshot, error) {
+			d := peerQueryBound
+			if cfg.HoldTimeout > 0 && cfg.HoldTimeout < d {
+				d = cfg.HoldTimeout
+			}
+			return peers.QueryDeadline(socket, d)
+		}
+	}
 	abs, err := filepath.Abs(cfg.StorageDir)
 	if err != nil {
 		return nil, err
@@ -73,15 +129,57 @@ func New(cfg Config) (*Server, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Server{
+	ctx, cancel := context.WithCancel(context.Background())
+	srv := &Server{
 		root:       abs,
+		peerSocket: cfg.PeerSocket,
+		senderID:   cfg.SenderID,
+		holdFor:    cfg.HoldTimeout,
+		indexEvery: cfg.IndexRescan,
+		index:      &treeIndex{byBase: map[string][]string{}},
+		queryPeers: cfg.QueryPeers,
+		stopIndex:  cancel,
+		holds:      make(chan struct{}, maxConcurrentHolds),
 		maxUpload:  cfg.MaxUpload,
 		maxExtract: cfg.MaxExtract,
 		maxFiles:   cfg.MaxFiles,
 		log:        cfg.Logger,
 		pages:      pages,
 		skill:      string(skill),
-	}, nil
+	}
+	if cfg.TreeDir != "" {
+		treeAbs, err := filepath.Abs(cfg.TreeDir)
+		if err != nil {
+			cancel()
+			return nil, err
+		}
+		st, err := os.Lstat(treeAbs)
+		if err != nil {
+			cancel()
+			return nil, fmt.Errorf("tree: %w", err)
+		}
+		if st.Mode()&os.ModeSymlink != 0 || !st.IsDir() {
+			cancel()
+			return nil, fmt.Errorf("tree must be a directory")
+		}
+		if treeAbs == abs || withinRoot(abs, treeAbs) || withinRoot(treeAbs, abs) {
+			cancel()
+			return nil, fmt.Errorf("tree and storage must not overlap")
+		}
+		srv.tree = treeAbs
+		if err := srv.rebuildIndex(); err != nil {
+			cancel()
+			return nil, err
+		}
+		go srv.indexLoop(ctx)
+	}
+	return srv, nil
+}
+
+func (s *Server) stop() {
+	if s.stopIndex != nil {
+		s.stopIndex()
+	}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -111,7 +209,7 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 		start := time.Now()
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Referrer-Policy", "same-origin")
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -164,31 +262,110 @@ func (s *Server) handleSkill(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.WriteString(w, body)
 }
 
+func (s *Server) writeReadStop(w http.ResponseWriter, r *http.Request, loc located, html bool) bool {
+	switch loc.kind {
+	case locateInvalid:
+		if html {
+			http.Error(w, ErrPathInvalid.Error(), http.StatusBadRequest)
+		} else {
+			s.writeError(w, r, http.StatusBadRequest, ErrPathInvalid)
+		}
+		return true
+	case locateAmbiguous:
+		if html {
+			s.renderAmbiguous(w, r, loc)
+		} else {
+			s.writeError(w, r, http.StatusConflict, fmt.Errorf("ambiguous path %s", loc.suffix))
+		}
+		return true
+	case locateDir:
+		if html {
+			dest := "/"
+			if loc.rel != "" {
+				dest = "/browse/" + urlPath(loc.rel)
+			}
+			http.Redirect(w, r, dest, http.StatusSeeOther)
+		} else {
+			s.writeError(w, r, http.StatusBadRequest, fmt.Errorf("path is a directory; use /api/tree or /api/archive"))
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Server) writeReadErr(w http.ResponseWriter, r *http.Request, err error) {
+	status := http.StatusInternalServerError
+	if errors.Is(err, errSymlink) {
+		status = http.StatusForbidden
+	}
+	if errors.Is(err, ErrPathEscape) || errors.Is(err, ErrPathInvalid) {
+		status = http.StatusBadRequest
+	}
+	if r != nil && strings.HasPrefix(r.URL.Path, "/api/") {
+		s.writeError(w, r, status, err)
+		return
+	}
+	http.Error(w, err.Error(), status)
+}
+
 func (s *Server) handleGetFile(w http.ResponseWriter, r *http.Request) {
-	abs, clean, err := s.resolve(s.requestPath(r))
+	want, err := parseMtimeQuery(r.URL.Query().Get("mtime"))
 	if err != nil {
 		s.writeError(w, r, http.StatusBadRequest, err)
 		return
 	}
-	if clean == "" {
-		s.writeError(w, r, http.StatusBadRequest, fmt.Errorf("path is a directory; use /api/tree or /api/archive"))
+	suffix := s.requestPath(r)
+	loc, err := s.locate(suffix, r.Referer())
+	if err != nil {
+		s.writeReadErr(w, r, err)
 		return
 	}
+	if s.writeReadStop(w, r, loc, false) {
+		return
+	}
+	if !readyLocated(loc, want) {
+		if !s.tryHold() {
+			s.writeError(w, r, http.StatusServiceUnavailable, errHoldBusy)
+			return
+		}
+		defer s.releaseHold()
+		loc, err = s.await(r.Context(), suffix, r.Referer(), want)
+		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				return
+			}
+			s.writeError(w, r, http.StatusNotFound, holdFailError(loc.suffix, err))
+			return
+		}
+		if s.writeReadStop(w, r, loc, false) {
+			return
+		}
+	}
+	if loc.kind != locateHit {
+		s.writeError(w, r, http.StatusNotFound, holdFailError(loc.suffix, ErrMissingAfterHold))
+		return
+	}
+	abs, clean := loc.abs, loc.rel
 	st, err := os.Lstat(abs)
 	if err != nil {
 		if os.IsNotExist(err) {
-			s.writeError(w, r, http.StatusNotFound, fmt.Errorf("not found"))
+			s.writeError(w, r, http.StatusNotFound, holdFailError(clean, ErrMissingAfterHold))
 			return
 		}
 		s.writeError(w, r, http.StatusInternalServerError, err)
 		return
 	}
 	if st.Mode()&os.ModeSymlink != 0 {
-		s.writeError(w, r, http.StatusForbidden, fmt.Errorf("symlinks are not served"))
+		s.writeError(w, r, http.StatusForbidden, errSymlink)
 		return
 	}
 	if st.IsDir() {
 		s.writeError(w, r, http.StatusBadRequest, fmt.Errorf("path is a directory; use /api/tree or /api/archive"))
+		return
+	}
+	if want > 0 && loc.fromTree && unixMtime(st.ModTime()) < want {
+		s.writeError(w, r, http.StatusNotFound, holdFailError(clean, ErrStaleMtime))
 		return
 	}
 	f, err := os.Open(abs)
@@ -319,6 +496,7 @@ type Entry struct {
 func (s *Server) listEntries(abs, rel string, recursive bool) ([]Entry, bool, error) {
 	var out []Entry
 	truncated := false
+	treeList, rootDev, haveDev := s.treeListDev(abs)
 	if recursive {
 		err := filepath.WalkDir(abs, func(p string, d fs.DirEntry, err error) error {
 			if err != nil {
@@ -336,6 +514,17 @@ func (s *Server) listEntries(abs, rel string, recursive bool) ([]Entry, bool, er
 					return fs.SkipDir
 				}
 				return nil
+			}
+			if treeList && ignoredName(d.Name()) {
+				if d.IsDir() {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			if treeList && haveDev && d.IsDir() {
+				if dev, ok := devOf(st); ok && dev != rootDev {
+					return fs.SkipDir
+				}
 			}
 			relPath, err := filepath.Rel(abs, p)
 			if err != nil {
@@ -367,6 +556,14 @@ func (s *Server) listEntries(abs, rel string, recursive bool) ([]Entry, bool, er
 		if st.Mode()&os.ModeSymlink != 0 {
 			continue
 		}
+		if treeList && ignoredName(d.Name()) {
+			continue
+		}
+		if treeList && haveDev && d.IsDir() {
+			if dev, ok := devOf(st); ok && dev != rootDev {
+				continue
+			}
+		}
 		child := d.Name()
 		if rel != "" {
 			child = rel + "/" + child
@@ -379,6 +576,18 @@ func (s *Server) listEntries(abs, rel string, recursive bool) ([]Entry, bool, er
 	}
 	sortEntries(out)
 	return out, truncated, nil
+}
+
+func (s *Server) treeListDev(abs string) (bool, uint64, bool) {
+	if s.tree == "" || !withinRoot(s.tree, abs) {
+		return false, 0, false
+	}
+	ri, err := os.Lstat(s.tree)
+	if err != nil {
+		return true, 0, false
+	}
+	dev, ok := devOf(ri)
+	return true, dev, ok
 }
 
 func makeEntry(st os.FileInfo, rel string) Entry {
