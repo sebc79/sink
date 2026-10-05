@@ -156,6 +156,16 @@ func TestBrowseAndViewHTML(t *testing.T) {
 		t.Fatalf("leftover upload-era UI: %s", html)
 	}
 
+	res, err = http.Get(ts.URL + "/?err=spoofed-upload-error")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	b, _ = io.ReadAll(res.Body)
+	if strings.Contains(string(b), "spoofed-upload-error") {
+		t.Fatal("browse still renders ?err=")
+	}
+
 	res, err = http.Get(ts.URL + "/view/readme.md")
 	if err != nil {
 		t.Fatal(err)

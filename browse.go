@@ -93,10 +93,10 @@ type pageData struct {
 }
 
 func (s *Server) handleBrowse(w http.ResponseWriter, r *http.Request) {
-	s.renderBrowse(w, r, s.requestPath(r), r.URL.Query().Get("err"))
+	s.renderBrowse(w, r, s.requestPath(r))
 }
 
-func (s *Server) renderBrowse(w http.ResponseWriter, r *http.Request, rel, errMsg string) {
+func (s *Server) renderBrowse(w http.ResponseWriter, r *http.Request, rel string) {
 	abs, clean, err := s.resolve(rel)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -132,7 +132,6 @@ func (s *Server) renderBrowse(w http.ResponseWriter, r *http.Request, rel, errMs
 		Breadcrumb: s.breadcrumbs(clean),
 		Entries:    entries,
 		Tree:       s.buildTree(clean),
-		Error:      errMsg,
 		Parent:     parentRel(clean),
 	}
 	s.renderPage(w, data)
