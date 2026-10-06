@@ -184,6 +184,18 @@
   .md-preview input[type=checkbox] { pointer-events: none; }
   .md-preview .math-display { display: block; margin: 1em 0; overflow-x: auto; overflow-y: hidden; text-align: center; }
   .md-preview .katex-display { margin: .6em 0; }
+  .md-preview .mermaid-wrap {
+    overflow-x: auto;
+    overflow-y: hidden;
+    max-width: 100%;
+    margin: 1em 0;
+  }
+  .md-preview .mermaid-wrap .mermaid {
+    margin: 0;
+    font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    white-space: pre;
+  }
+  .md-preview .mermaid-wrap svg { max-width: none; height: auto; }
   .pv-bar { display: flex; align-items: center; justify-content: flex-end; gap: .6rem; margin: 0 0 .45rem; }
   .pv-name { display: none; }
   .pv-bar button.pv-fs {
@@ -271,7 +283,7 @@
     pre.view { color: #000; white-space: pre-wrap; }
     .md-preview pre { white-space: pre-wrap; overflow: visible; }
     .md-preview table { display: table; width: 100%; overflow: visible; }
-    .md-preview tr, .md-preview img, .md-preview pre { break-inside: avoid; }
+    .md-preview tr, .md-preview img, .md-preview pre, .md-preview .mermaid-wrap { break-inside: avoid; }
     .md-preview h1, .md-preview h2, .md-preview h3 { break-after: avoid; }
     .md-preview [hidden], pre.view[hidden] { display: none !important; }
     .pv-bar { display: none !important; }
@@ -482,6 +494,7 @@
       if (isRaw) url.searchParams.set("mode", "raw");
       else url.searchParams.delete("mode");
       history.replaceState(null, "", url.pathname + url.search);
+      if (!isRaw && typeof loadAndRenderMermaid === "function") loadAndRenderMermaid();
     });
   });
   function renderKatex() {
@@ -498,6 +511,49 @@
 </script>
 <script src="https://cdn.jsdelivr.net/npm/katex@0.16.22/dist/katex.min.js" crossorigin="anonymous"></script>
 <script>renderKatex();</script>
+{{end}}
+{{if and .File .File.HasMermaid}}
+<script>
+  function renderMermaid() {
+    const preview = document.getElementById("md-preview");
+    if (typeof mermaid === "undefined" || !preview || preview.hidden) return;
+    const nodes = preview.querySelectorAll(".mermaid:not([data-processed])");
+    if (!nodes.length) return;
+    mermaid.initialize({ startOnLoad: false, securityLevel: "strict" });
+    mermaid.run({ nodes: Array.from(nodes) }).catch(() => {
+      nodes.forEach((el) => {
+        if (el.getAttribute("data-processed")) return;
+        const src = el.textContent;
+        const pre = document.createElement("pre");
+        const code = document.createElement("code");
+        code.className = "language-mermaid";
+        code.textContent = src;
+        pre.appendChild(code);
+        el.replaceWith(pre);
+      });
+    });
+  }
+  function loadAndRenderMermaid() {
+    const preview = document.getElementById("md-preview");
+    if (!preview || preview.hidden) return;
+    if (!preview.querySelector(".mermaid")) return;
+    if (typeof mermaid !== "undefined") {
+      renderMermaid();
+      return;
+    }
+    if (document.querySelector("script[data-mermaid-cdn]")) return;
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js";
+    s.crossOrigin = "anonymous";
+    s.dataset.mermaidCdn = "1";
+    s.onload = renderMermaid;
+    document.body.appendChild(s);
+  }
+</script>
+{{if ne .File.ViewMode "raw"}}
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js" crossorigin="anonymous" data-mermaid-cdn="1"></script>
+<script>renderMermaid();</script>
+{{end}}
 {{end}}
 </body>
 </html>

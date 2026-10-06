@@ -42,7 +42,7 @@ No auth in the default build. Treat LAN/Tailscale reachability as your perimeter
 ## What it serves
 
 - `/view` and `/api/file` resolve a path in the `-tree` checkout: exact path, then a unique basename or trailing-segment match. Optional `?mtime=` holds until the checkout file is at least that fresh.
-- `/`, `/browse`, `/api/tree`, and `/api/archive` list and pack the same checkout. Markdown (`*.md`) opens as a rendered preview (KaTeX for `$…$` / `$$…$$`) with a switch back to the raw source.
+- `/`, `/browse`, `/api/tree`, and `/api/archive` list and pack the same checkout. Markdown (`*.md`) opens as a rendered preview (KaTeX for `$…$` / `$$…$$`, Mermaid for mermaid fenced code blocks) with a switch back to the raw source. The Mermaid script loads only when the file has a mermaid fence, and only in preview.
 - In markdown preview, a backtick filename such as `` `notes.md` `` or `` `originals/notes.md` `` becomes a `/view` link when that exact path exists relative to the viewed file's directory. Missing files, `../` escapes, shell-like spans, and names that only exist elsewhere in the tree stay plain code. Raw mode (`?mode=raw`) is unchanged.
 
 ## Run
@@ -71,6 +71,8 @@ Open http://localhost:8080/ to browse the checkout.
 ArborSync cutover is done. sink reads only `-tree`. There is no `-storage` directory and no dual-read fallback.
 
 Markdown preview links backtick filenames that resolve to a regular file next to the viewed document. The match is an exact relative path under `-tree`. It does not search the basename index, trailing segments, or `INDEX.md` elsewhere in the tree.
+
+Markdown preview also renders mermaid fenced code blocks as diagrams. Other fences stay code. The Mermaid script is omitted when the file has no mermaid fence, and in raw mode.
 
 ## Note for the Grok Bot team
 
