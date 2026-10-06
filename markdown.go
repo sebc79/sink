@@ -25,7 +25,8 @@ func isMarkdownName(name string) bool {
 }
 
 func renderMarkdown(src []byte, relPath string) (template.HTML, error) {
-	return renderViewMarkdown(src, relPath, nil)
+	html, _, err := renderViewMarkdown(src, relPath, nil)
+	return html, err
 }
 
 func (s *Server) treeFileExists(rel string) bool {
@@ -33,14 +34,16 @@ func (s *Server) treeFileExists(rel string) bool {
 	return err == nil && kind == statFile
 }
 
-func renderViewMarkdown(src []byte, relPath string, exists func(string) bool) (template.HTML, error) {
+func renderViewMarkdown(src []byte, relPath string, exists func(string) bool) (template.HTML, bool, error) {
 	src = linkifyTreeMentions(src)
 	dir := parentRel(relPath)
+	var hasMermaid bool
 	md := goldmark.New(
 		goldmark.WithExtensions(
 			extension.GFM,
 			extension.Footnote,
 			&mathExtender{},
+			&mermaidExtender{found: &hasMermaid},
 		),
 		goldmark.WithParserOptions(
 			parser.WithAutoHeadingID(),
@@ -52,9 +55,9 @@ func renderViewMarkdown(src []byte, relPath string, exists func(string) bool) (t
 	)
 	var buf bytes.Buffer
 	if err := md.Convert(src, &buf); err != nil {
-		return "", err
+		return "", false, err
 	}
-	return template.HTML(buf.String()), nil
+	return template.HTML(buf.String()), hasMermaid, nil
 }
 
 type mdURLTransformer struct {

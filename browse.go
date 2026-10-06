@@ -68,6 +68,7 @@ type fileView struct {
 	IsText      bool
 	IsImage     bool
 	IsMarkdown  bool
+	HasMermaid  bool
 	ViewMode    string
 	Truncated   bool
 	HexPreview  string
@@ -317,11 +318,12 @@ func (s *Server) readFileView(abs, clean string, st os.FileInfo) (*fileView, err
 		fv.Content = string(body)
 		if isMarkdownName(clean) {
 			fv.IsMarkdown = true
-			html, err := renderViewMarkdown(body, clean, s.treeFileExists)
+			html, mermaid, err := renderViewMarkdown(body, clean, s.treeFileExists)
 			if err != nil {
 				return nil, err
 			}
 			fv.HTML = html
+			fv.HasMermaid = mermaid
 		}
 		return fv, nil
 	}

@@ -314,7 +314,7 @@ func TestRenderMarkdownRelFiles(t *testing.T) {
 		"projects/cv/notes/originals/2026-09-08-derender-market-verdict.md": true,
 		"INDEX.md": true,
 	}
-	html, err := renderViewMarkdown([]byte(src), "projects/cv/notes/2026-09-18-florence-journal-hebdo-fr.md", func(rel string) bool {
+	html, _, err := renderViewMarkdown([]byte(src), "projects/cv/notes/2026-09-18-florence-journal-hebdo-fr.md", func(rel string) bool {
 		return exists[rel]
 	})
 	if err != nil {
@@ -348,7 +348,7 @@ func TestRenderMarkdownRelFiles(t *testing.T) {
 
 func TestRenderMarkdownRelFileKeepsTreeAbsoluteBacktick(t *testing.T) {
 	src := "Open `projects/alpha/extra/keep.md` now.\n"
-	html, err := renderViewMarkdown([]byte(src), "projects/cv/notes/journal.md", func(string) bool {
+	html, _, err := renderViewMarkdown([]byte(src), "projects/cv/notes/journal.md", func(string) bool {
 		return true
 	})
 	if err != nil {
@@ -421,3 +421,139 @@ func TestMarkdownViewRelFileLinks(t *testing.T) {
 		t.Fatalf("raw pane lost backticks: %s", raw)
 	}
 }
+
+func TestRenderMarkdownMermaid(t *testing.T) {
+	src := "```mermaid\ngraph TD\n  A-->B\n```\n\n```js\nconst x = 1;\n```\n"
+	html, mermaid, err := renderViewMarkdown([]byte(src), "d.md", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !mermaid {
+		t.Fatal("expected a mermaid block")
+	}
+	s := string(html)
+	if !strings.Contains(s, `class="mermaid-wrap"`) || !strings.Contains(s, `class="mermaid"`) {
+		t.Fatalf("missing mermaid wrap: %s", s)
+	}
+	if !strings.Contains(s, "graph TD") || !strings.Contains(s, "A--&gt;B") {
+		t.Fatalf("mermaid source missing or not escaped: %s", s)
+	}
+	if !strings.Contains(s, `class="language-js"`) || !strings.Contains(s, "const x = 1;") {
+		t.Fatalf("js fence changed: %s", s)
+	}
+	if strings.Contains(s, `class="language-mermaid"`) {
+		t.Fatalf("mermaid stayed a code fence: %s", s)
+	}
+}
+
+func TestRenderMarkdownMermaidEscapes(t *testing.T) {
+	src := "```mermaid\ngraph TD\n  A[\"<script>alert(1)</script>\"] --> B\n```\n"
+	html, mermaid, err := renderViewMarkdown([]byte(src), "d.md", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !mermaid {
+		t.Fatal("expected a mermaid block")
+	}
+	s := string(html)
+	if strings.Contains(s, "<script>alert(1)</script>") {
+		t.Fatalf("raw HTML leaked: %s", s)
+	}
+	if !strings.Contains(s, "&lt;script&gt;alert(1)&lt;/script&gt;") {
+		t.Fatalf("source not escaped: %s", s)
+	}
+}
+
+func TestRenderMarkdownMermaidIgnoresOtherFences(t *testing.T) {
+	src := "```\nmermaid\n```\n\n```go\nfunc main() {}\n```\n\n`mermaid`\n"
+	html, mermaid, err := renderViewMarkdown([]byte(src), "d.md", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mermaid {
+		t.Fatal("plain fences and inline code should not count as mermaid")
+	}
+	s := string(html)
+	if strings.Contains(s, `class="mermaid"`) {
+		t.Fatalf("non-mermaid fence became a diagram: %s", s)
+	}
+	if !strings.Contains(s, `class="language-go"`) {
+		t.Fatalf("go fence missing: %s", s)
+	}
+}
+
+func TestMarkdownViewMermaidAssets(t *testing.T) {
+	s := testServer(t)
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+
+	writeRel(t, s.tree, "notes/flow.md", "# Flow\n\n```mermaid\ngraph LR\n  A-->B\n```\n")
+	writeRel(t, s.tree, "notes/plain.md", "# Hi\n\n```js\n1\n```\n")
+
+	res, err := http.Get(ts.URL + "/view/notes/flow.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	b, _ := io.ReadAll(res.Body)
+	html := string(b)
+	if res.StatusCode != 200 {
+		t.Fatalf("status %d %s", res.StatusCode, html)
+	}
+	if !strings.Contains(html, mermaidScriptSrc) {
+		t.Fatalf("missing mermaid script: %s", html)
+	}
+	if !strings.Contains(html, `class="mermaid"`) || !strings.Contains(html, "graph LR") {
+		t.Fatalf("missing mermaid source: %s", html)
+	}
+	if !strings.Contains(html, "securityLevel") || !strings.Contains(html, `"strict"`) {
+		t.Fatalf("missing strict mermaid config: %s", html)
+	}
+
+	res, err = http.Get(ts.URL + "/view/notes/flow.md?mode=raw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	b, _ = io.ReadAll(res.Body)
+	raw := string(b)
+	if strings.Contains(raw, mermaidScriptSrc) {
+		t.Fatalf("mermaid script loaded in raw mode: %s", raw)
+	}
+	if !strings.Contains(raw, `id="md-preview" hidden`) {
+		t.Fatalf("raw mode should hide preview: %s", raw)
+	}
+
+	res, err = http.Get(ts.URL + "/view/notes/plain.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	b, _ = io.ReadAll(res.Body)
+	plain := string(b)
+	if strings.Contains(plain, "mermaid.min.js") || strings.Contains(plain, `class="mermaid"`) {
+		t.Fatalf("mermaid loaded without a mermaid fence: %s", plain)
+	}
+}
+
+func TestNonMarkdownViewHasNoMermaid(t *testing.T) {
+	s := testServer(t)
+	ts := httptest.NewServer(s.Handler())
+	t.Cleanup(ts.Close)
+	writeRel(t, s.tree, "a.txt", "```mermaid\ngraph TD\n  A-->B\n```\n")
+	res, err := http.Get(ts.URL + "/view/a.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	b, _ := io.ReadAll(res.Body)
+	html := string(b)
+	if strings.Contains(html, mermaidScriptSrc) || strings.Contains(html, "mermaid.min.js") {
+		t.Fatal("mermaid loaded for plain text")
+	}
+	if strings.Contains(html, `class="mermaid"`) {
+		t.Fatal("plain text rendered mermaid HTML")
+	}
+}
+
+const mermaidScriptSrc = `src="https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js"`
