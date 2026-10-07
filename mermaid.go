@@ -82,11 +82,7 @@ func (r *mermaidRenderer) render(w util.BufWriter, source []byte, node ast.Node,
 		return ast.WalkContinue, nil
 	}
 	_, _ = w.WriteString(`<div class="mermaid-wrap"><div class="mermaid">`)
-	lines := node.Lines()
-	for i := 0; i < lines.Len(); i++ {
-		seg := lines.At(i)
-		_, _ = w.Write(util.EscapeHTML(seg.Value(source)))
-	}
+	_, _ = w.Write(util.EscapeHTML(node.Lines().Value(source)))
 	_, _ = w.WriteString("</div></div>\n")
 	return ast.WalkContinue, nil
 }
