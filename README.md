@@ -72,7 +72,7 @@ ArborSync cutover is done. sink reads only `-tree`. There is no `-storage` direc
 
 Markdown preview links backtick filenames that resolve to a regular file next to the viewed document. The match is an exact relative path under `-tree`. It does not search the basename index, trailing segments, or `INDEX.md` elsewhere in the tree.
 
-Markdown preview also renders mermaid fenced code blocks as diagrams. Other fences stay code. The Mermaid script is omitted when the file has no mermaid fence, and in raw mode.
+Markdown preview also renders mermaid fenced code blocks as diagrams. The fence body is copied into the page with HTML escaping only, so indentation and newlines stay as written. Other fences stay code. The Mermaid script is omitted when the file has no mermaid fence, and in raw mode.
 
 ## Note for the Grok Bot team
 
