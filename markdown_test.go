@@ -1,6 +1,7 @@
 package main
 
 import (
+	"html"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -419,6 +420,59 @@ func TestMarkdownViewRelFileLinks(t *testing.T) {
 	raw := html[rawStart:]
 	if !strings.Contains(raw, "`2026-09-08-derender-market-research.md`") {
 		t.Fatalf("raw pane lost backticks: %s", raw)
+	}
+}
+
+func mermaidDivContent(t *testing.T, rendered string) string {
+	t.Helper()
+	const open = `<div class="mermaid">`
+	i := strings.Index(rendered, open)
+	if i < 0 {
+		t.Fatalf("missing mermaid div: %s", rendered)
+	}
+	rest := rendered[i+len(open):]
+	j := strings.Index(rest, "</div>")
+	if j < 0 {
+		t.Fatalf("unclosed mermaid div: %s", rendered)
+	}
+	return html.UnescapeString(rest[:j])
+}
+
+func TestRenderMarkdownMermaidPreservesSource(t *testing.T) {
+	cases := []struct {
+		name   string
+		source string
+	}{
+		{
+			name: "mindmap",
+			source: "" +
+				"mindmap\n" +
+				"  Root\n" +
+				"    Origins\n" +
+				"      History\n" +
+				"    Research\n" +
+				"      On effectiveness\n",
+		},
+		{
+			name:   "flowchart",
+			source: "graph TD\n  A-->B\n  B-->C\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			md := "```mermaid\n" + tc.source + "```\n"
+			rendered, mermaid, err := renderViewMarkdown([]byte(md), "d.md", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !mermaid {
+				t.Fatal("expected a mermaid block")
+			}
+			got := mermaidDivContent(t, string(rendered))
+			if got != tc.source {
+				t.Fatalf("mermaid source mismatch\nwant %q\ngot  %q", tc.source, got)
+			}
+		})
 	}
 }
 
